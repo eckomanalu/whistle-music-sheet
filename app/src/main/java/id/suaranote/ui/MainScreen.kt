@@ -50,6 +50,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import id.suaranote.MAX_VOICES
 import id.suaranote.MainViewModel
 import id.suaranote.UiState
 import id.suaranote.core.MusicKey
