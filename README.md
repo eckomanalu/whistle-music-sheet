@@ -47,3 +47,8 @@ Workflow `.github/workflows/build-apk.yml` menjalankan tes unit lalu membuat APK
 - **Nada dasar**, **Birama**, dan **Suara (lapisan)** berupa dropdown. Menambah/menghapus suara ada di dropdown Suara.
 - **Tekan lama sebuah bar** untuk menu: mulai seleksi, pilih akhir seleksi, salin, hapus bar terseleksi, tempel (sisip/timpa) di bar itu, salin ke bar terakhir, batalkan seleksi. Aksi berlaku pada suara bar yang ditekan.
 - **Suku kata**: isi "Suku kata aktif", lalu sentuh area di bawah angka pada not angka. Suku kata menempel pada not (ikut bergeser, tersalin, dan terhapus bersama not). Teks kosong + sentuh = hapus suku kata.
+
+## Struktur modul
+
+- `shared/` — Kotlin murni (JVM): `core/` (not, susunan, sintesis) dan `render/` (not balok & not angka) beserta tes unit. Dipakai Android dan nanti desktop.
+- `app/` — aplikasi Android (layar Compose, audio AudioTrack, ViewModel).

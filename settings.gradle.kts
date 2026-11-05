@@ -15,4 +15,4 @@ dependencyResolutionManagement {
 }
 
 rootProject.name = "SuaraNote"
-include(":app")
+include(":app", ":shared")
