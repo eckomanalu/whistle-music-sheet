@@ -66,7 +66,7 @@ private const val LAST_MIDI = 84 // C6
 @Composable
 fun MainScreen(vm: MainViewModel = viewModel()) {
     val state by vm.state.collectAsStateWithLifecycle()
-    LifecycleEventEffect(Lifecycle.Event.ON_STOP) { vm.stopSong() }
+    LifecycleEventEffect(Lifecycle.Event.ON_STOP) { vm.silence() }
 
     Column(Modifier.fillMaxSize().systemBarsPadding()) {
         Column(
@@ -117,9 +117,6 @@ private fun SettingsCard(state: UiState, vm: MainViewModel) {
                     )
                 }
             }
-            Stepper("Tempo putar: ${s.bpm} ketuk/menit",
-                onMinus = { vm.updateSettings { it.copy(bpm = (it.bpm - 5).coerceAtLeast(40)) } },
-                onPlus = { vm.updateSettings { it.copy(bpm = (it.bpm + 5).coerceAtMost(200)) } })
             Stepper(
                 "Geser oktaf not angka: " + (if (s.octaveOffset > 0) "+" else "") + s.octaveOffset,
                 onMinus = { vm.updateSettings { it.copy(octaveOffset = (it.octaveOffset - 1).coerceAtLeast(-2)) } },
@@ -161,6 +158,24 @@ private fun InputPanel(state: UiState, vm: MainViewModel) {
                     label = { Text(label, fontSize = 16.sp) },
                 )
             }
+        }
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("Tempo", style = MaterialTheme.typography.labelMedium)
+            OutlinedButton(onClick = { vm.changeTempo(-5) }, contentPadding = PaddingValues(0.dp), modifier = Modifier.size(44.dp)) {
+                Text("−", fontSize = 20.sp)
+            }
+            Text("${state.settings.bpm}", fontWeight = FontWeight.Bold, fontSize = 18.sp,
+                modifier = Modifier.width(44.dp), textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+            OutlinedButton(onClick = { vm.changeTempo(5) }, contentPadding = PaddingValues(0.dp), modifier = Modifier.size(44.dp)) {
+                Text("+", fontSize = 20.sp)
+            }
+            FilterChip(
+                selected = state.metronomeOn,
+                onClick = { vm.toggleMetronome() },
+                label = { Text(if (state.metronomeOn) "Metronom ●" else "Metronom") },
+                modifier = Modifier.weight(1f),
+            )
         }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedButton(onClick = { vm.addRest() }, modifier = Modifier.weight(1f), contentPadding = PaddingValues(4.dp)) {

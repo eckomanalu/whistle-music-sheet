@@ -6,7 +6,7 @@ Aplikasi Android (Kotlin + Jetpack Compose) untuk menyusun lagu dari **tuts pian
 1. Pilih **panjang nada** (dalam ketuk: 4, 3, 2, 1½, 1, ¾, ½, ¼).
 2. Tekan tuts piano (C4 sampai C6, dua oktaf). Nada berbunyi dan langsung masuk ke notasi dengan panjang terpilih.
 3. **Rehat** menambah jeda sepanjang panjang terpilih. **Hapus** selalu menghapus satu not/rehat paling akhir. **Putar** memainkan seluruh lagu.
-4. Nada dasar, birama, tempo putar, dan geser oktaf not angka bisa diubah kapan saja; notasi langsung dihitung ulang.
+4. Nada dasar, birama, geser oktaf not angka, dan tempo (tombol − dan +) bisa diubah kapan saja; **Metronom** membunyikan tik tiap ketuk (juga saat lagu diputar); notasi langsung dihitung ulang.
 
 ## Struktur
 - `core/Composition.kt` daftar not/rehat berurutan, tambah/hapus terakhir, pembagian ke birama dan ikatan di garis birama

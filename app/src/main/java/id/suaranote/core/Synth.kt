@@ -7,6 +7,34 @@ import kotlin.math.sin
 object Synth {
     const val RATE = 22050
 
+    /** Bunyi tik metronom ~30 ms; [accent] (ketuk pertama birama) lebih tinggi. */
+    fun click(accent: Boolean): ShortArray {
+        val n = (0.03 * RATE).toInt()
+        val f = if (accent) 1600.0 else 1100.0
+        return ShortArray(n) { i ->
+            val t = i.toDouble() / RATE
+            (sin(2 * PI * f * t) * Math.exp(-t * 120) * 0.8 * 32767).toInt().toShort()
+        }
+    }
+
+    /** Menambahkan tik metronom tiap ketuk ke [pcm] (panjang tetap). */
+    fun mixClicks(pcm: ShortArray, bpm: Int, beatsPerBar: Int): ShortArray {
+        val out = pcm.copyOf()
+        val beat = RATE * 60.0 / bpm
+        var i = 0
+        while (true) {
+            val start = Math.round(i * beat).toInt()
+            if (start >= out.size) break
+            val c = click(i % beatsPerBar == 0)
+            for (k in c.indices) {
+                if (start + k >= out.size) break
+                out[start + k] = (out[start + k] + c[k]).coerceIn(-32768, 32767).toShort()
+            }
+            i++
+        }
+        return out
+    }
+
     /** Satu nada tunggal, untuk bunyi saat tuts ditekan. */
     fun note(midi: Int, seconds: Double): ShortArray =
         render(listOf(Measure(listOf(NoteEvent(midi, 1)))), (60.0 / (seconds * 4)).toInt().coerceAtLeast(1))

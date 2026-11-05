@@ -59,6 +59,18 @@ class ScoreTest {
         assertEquals(listOf(NoteEvent(60, 12)), c.measures(4)[0].events)
     }
 
+    @Test
+    fun metronomeClicksLandOnBeats() {
+        val silent = ShortArray(Synth.RATE * 2)
+        val mixed = Synth.mixClicks(silent, 120, 4) // tik tiap 0,5 detik
+        assertEquals(silent.size, mixed.size)
+        fun energy(from: Double) = (0 until 600).sumOf { Math.abs(mixed[(from * Synth.RATE).toInt() + it].toInt()) }
+        assertEquals(true, energy(0.0) > 0)
+        assertEquals(true, energy(0.5) > 0)
+        assertEquals(true, energy(1.5) > 0)
+        assertEquals(0, energy(0.25)) // di antara ketukan sunyi
+    }
+
     @Test(expected = IllegalArgumentException::class)
     fun rejectsNonStandardDuration() {
         Composition().add(60, 5)
