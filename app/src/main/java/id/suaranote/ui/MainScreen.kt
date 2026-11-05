@@ -25,7 +25,10 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -85,11 +88,11 @@ fun MainScreen(vm: MainViewModel = viewModel()) {
                 )
             } else {
                 Text(
-                    "Sentuh not atau ruang kosong sebuah birama untuk memilih titik (biru): pemutaran mulai dari sana dan not yang diketik disisipkan di sana. Sentuh lagi untuk membatalkan.",
+                    "Sentuh not atau ruang kosong birama untuk memilih titik (biru): pemutaran mulai dari sana dan not yang diketik disisipkan di sana. Tekan lama sebuah bar untuk menu seleksi, salin, hapus, tempel. Sentuh area di bawah angka not angka untuk memasang suku kata.",
                     style = MaterialTheme.typography.bodySmall,
                 )
-                NumberedCard(state) { u, bar, v -> vm.tap(u, bar, v) }
-                StaffCard(state) { u, bar, v -> vm.tap(u, bar, v) }
+                NumberedCard(state, vm)
+                StaffCard(state, vm)
             }
             state.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
         }
@@ -103,25 +106,19 @@ private fun SettingsCard(state: UiState, vm: MainViewModel) {
     val s = state.settings
     Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("Nada dasar (1 = ${s.key.label})", fontWeight = FontWeight.Medium)
-            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                for (k in MusicKey.values()) {
-                    FilterChip(
-                        selected = s.key == k,
-                        onClick = { vm.updateSettings { it.copy(key = k) } },
-                        label = { Text(k.label) },
-                    )
-                }
-            }
-            Text("Birama", fontWeight = FontWeight.Medium)
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                for (b in listOf(2, 3, 4)) {
-                    FilterChip(
-                        selected = s.beatsPerBar == b,
-                        onClick = { vm.updateSettings { it.copy(beatsPerBar = b) } },
-                        label = { Text("$b/4") },
-                    )
-                }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                DropdownField(
+                    label = "Nada dasar",
+                    value = "1 = ${s.key.label}",
+                    items = MusicKey.values().map { k -> k.label to { vm.updateSettings { it.copy(key = k) } } },
+                    modifier = Modifier.weight(1f),
+                )
+                DropdownField(
+                    label = "Birama",
+                    value = "${s.beatsPerBar}/4",
+                    items = listOf(2, 3, 4).map { b -> "$b/4" to { vm.updateSettings { it.copy(beatsPerBar = b) } } },
+                    modifier = Modifier.weight(1f),
+                )
             }
             Stepper(
                 "Geser oktaf not angka: " + (if (s.octaveOffset > 0) "+" else "") + s.octaveOffset,
@@ -132,27 +129,23 @@ private fun SettingsCard(state: UiState, vm: MainViewModel) {
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun EditCard(state: UiState, vm: MainViewModel) {
     val bpb = state.settings.beatsPerBar
+    val n = state.score.voices.size
     Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("Suara (lapisan)", fontWeight = FontWeight.Medium)
-            Row(Modifier.horizontalScroll(rememberScrollState()), verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                for (i in state.score.voices.indices) {
-                    FilterChip(
-                        selected = state.activeVoice == i,
-                        onClick = { vm.selectVoice(i) },
-                        label = { Text("Suara ${i + 1}", color = VoiceColors[i % VoiceColors.size]) },
-                    )
-                }
-                OutlinedButton(onClick = { vm.addVoice() }, enabled = state.score.voices.size < MAX_VOICES,
-                    contentPadding = PaddingValues(horizontal = 10.dp)) { Text("+ Suara") }
-                OutlinedButton(onClick = { vm.removeVoice() }, enabled = state.score.voices.size > 1,
-                    contentPadding = PaddingValues(horizontal = 10.dp)) { Text("− Hapus suara ${state.activeVoice + 1}") }
-            }
+            val items = ArrayList<Pair<String, () -> Unit>>()
+            for (i in 0 until n) items += "Suara ${i + 1}" to { vm.selectVoice(i) }
+            if (n < MAX_VOICES) items += "+ Tambah suara" to { vm.addVoice() }
+            if (n > 1) items += "− Hapus Suara ${state.activeVoice + 1}" to { vm.removeVoice() }
+            DropdownField(
+                label = "Suara (lapisan)",
+                value = "Suara ${state.activeVoice + 1} dari $n",
+                items = items,
+                modifier = Modifier.fillMaxWidth(),
+                valueColor = VoiceColors[state.activeVoice % VoiceColors.size],
+            )
             val cur = state.startUnit
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween) {
@@ -164,48 +157,65 @@ private fun EditCard(state: UiState, vm: MainViewModel) {
                 )
                 if (cur != null) TextButton(onClick = { vm.clearStart() }) { Text("Ke ujung") }
             }
-
-            Text("Blok bar: salin dan tempel", fontWeight = FontWeight.Medium)
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                FilterChip(
-                    selected = state.blockMode,
-                    onClick = { vm.toggleBlockMode() },
-                    label = { Text(if (state.blockMode) "Blok bar ●" else "Blok bar") },
-                )
-                val from = state.blockFrom
-                val to = state.blockTo
-                Text(
-                    when {
-                        state.blockMode && state.blockAnchor != null -> "Sentuh bar akhir blok (bar ${state.blockAnchor + 1} dipilih)"
-                        from != null && to != null -> if (from == to) "Bar ${from + 1} dipilih" else "Bar ${from + 1}–${to + 1} dipilih"
-                        state.blockMode -> "Sentuh bar awal lalu bar akhir"
-                        else -> "Nyalakan lalu sentuh bar awal dan bar akhir"
-                    },
-                    style = MaterialTheme.typography.bodySmall,
-                    modifier = Modifier.weight(1f),
-                )
-                if (state.blockFrom != null) TextButton(onClick = { vm.clearBlock() }) { Text("Batal") }
-            }
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                OutlinedButton(onClick = { vm.copyBlock() }, enabled = state.blockFrom != null,
-                    modifier = Modifier.weight(1f), contentPadding = PaddingValues(2.dp)) { Text("Salin", fontSize = 12.sp, maxLines = 1) }
-                OutlinedButton(onClick = { vm.copyBlockToEnd() }, enabled = state.blockFrom != null,
-                    modifier = Modifier.weight(1.3f), contentPadding = PaddingValues(2.dp)) { Text("Salin ke akhir", fontSize = 12.sp, maxLines = 1) }
-            }
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                OutlinedButton(onClick = { vm.paste(false) }, enabled = state.clipboard != null,
-                    modifier = Modifier.weight(1f), contentPadding = PaddingValues(2.dp)) { Text("Tempel: sisip", fontSize = 12.sp, maxLines = 1) }
-                OutlinedButton(onClick = { vm.paste(true) }, enabled = state.clipboard != null,
-                    modifier = Modifier.weight(1f), contentPadding = PaddingValues(2.dp)) { Text("Tempel: timpa", fontSize = 12.sp, maxLines = 1) }
-            }
+            val from = state.blockFrom
+            val to = state.blockTo
             Text(
-                if (state.clipboard == null) "Papan klip kosong."
-                else "Papan klip: ${state.clipboardBars} bar. Sisip menggeser isi sesudahnya; Timpa menghapus not pada bar tujuan. " +
-                    "Bar tujuan = bar tempat titik terpilih (matikan Blok bar, lalu sentuh bar tujuan).",
+                (if (from != null && to != null) (if (from == to) "Bar ${from + 1} terseleksi. " else "Bar ${from + 1}–${to + 1} terseleksi. ") else "") +
+                    (if (state.clipboard != null) "Papan klip: ${state.clipboardBars} bar. " else "") +
+                    "Tekan lama sebuah bar untuk menu.",
                 style = MaterialTheme.typography.bodySmall,
+            )
+            OutlinedTextField(
+                value = state.activeLyric,
+                onValueChange = { vm.setActiveLyric(it) },
+                label = { Text("Suku kata aktif") },
+                supportingText = { Text("Sentuh di bawah angka not untuk memasang. Kosongkan lalu sentuh untuk menghapus.") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
             )
         }
     }
+}
+
+/** Dropdown: tombol berlabel yang membuka daftar pilihan. */
+@Composable
+private fun DropdownField(
+    label: String,
+    value: String,
+    items: List<Pair<String, () -> Unit>>,
+    modifier: Modifier = Modifier,
+    valueColor: Color = Color.Unspecified,
+) {
+    var open by remember { mutableStateOf(false) }
+    Column(modifier) {
+        Text(label, style = MaterialTheme.typography.labelMedium)
+        Box(Modifier.fillMaxWidth()) {
+            OutlinedButton(onClick = { open = true }, modifier = Modifier.fillMaxWidth()) {
+                Text("$value  ▾", color = valueColor, maxLines = 1)
+            }
+            DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+                for ((text, run) in items) {
+                    DropdownMenuItem(text = { Text(text) }, onClick = { open = false; run() })
+                }
+            }
+        }
+    }
+}
+
+/** Menu tekan-lama pada bar [measure] (dari 0) di [voice]. */
+private fun barActions(state: UiState, vm: MainViewModel, measure: Int, voice: Int): List<BarAction> {
+    val hasSel = state.blockFrom != null
+    val n = measure + 1
+    return listOf(
+        BarAction("Mulai seleksi di bar $n") { vm.selectBar(measure, voice) },
+        BarAction("Pilih akhir seleksi di bar $n", hasSel) { vm.extendSelectionTo(measure, voice) },
+        BarAction("Salin bar terseleksi", hasSel) { vm.copyBlock() },
+        BarAction("Hapus bar terseleksi", hasSel) { vm.deleteBlock() },
+        BarAction("Tempel sebelum bar $n (sisip)", state.clipboard != null) { vm.pasteAtBar(measure, voice, false) },
+        BarAction("Tempel di bar $n (timpa)", state.clipboard != null) { vm.pasteAtBar(measure, voice, true) },
+        BarAction("Salin terseleksi ke bar terakhir", hasSel) { vm.copyToEndOf(voice) },
+        BarAction("Batalkan seleksi", hasSel) { vm.clearBlock() },
+    )
 }
 
 @Composable
@@ -378,7 +388,7 @@ private fun Key(midi: Int, black: Boolean, onDown: (Int) -> Unit, onUp: (Int) ->
 }
 
 @Composable
-private fun NumberedCard(state: UiState, onTap: (Int, Boolean, Int) -> Unit) {
+private fun NumberedCard(state: UiState, vm: MainViewModel) {
     val s = state.settings
     val clipboard = LocalClipboardManager.current
     Card(colors = CardDefaults.cardColors(containerColor = Color.White)) {
@@ -406,7 +416,9 @@ private fun NumberedCard(state: UiState, onTap: (Int, Boolean, Int) -> Unit) {
                     playUnit = state.playUnit, startUnit = state.startUnit, startIsBar = state.startIsBar,
                     activeVoice = state.activeVoice, voiceCount = state.score.voices.size,
                     blockFrom = state.blockFrom, blockTo = state.blockTo,
-                    onTap = onTap,
+                    onTap = { u, b, v -> vm.tap(u, b, v) },
+                    onLyricTap = { u, v -> vm.placeLyric(u, v) },
+                    barMenu = { m, v -> barActions(state, vm, m, v) },
                 )
             }
         }
@@ -414,7 +426,7 @@ private fun NumberedCard(state: UiState, onTap: (Int, Boolean, Int) -> Unit) {
 }
 
 @Composable
-private fun StaffCard(state: UiState, onTap: (Int, Boolean, Int) -> Unit) {
+private fun StaffCard(state: UiState, vm: MainViewModel) {
     val s = state.settings
     Card(colors = CardDefaults.cardColors(containerColor = Color.White)) {
         Column(Modifier.padding(12.dp)) {
@@ -431,7 +443,8 @@ private fun StaffCard(state: UiState, onTap: (Int, Boolean, Int) -> Unit) {
                     playUnit = state.playUnit, startUnit = state.startUnit, startIsBar = state.startIsBar,
                     activeVoice = state.activeVoice, voiceCount = state.score.voices.size,
                     blockFrom = state.blockFrom, blockTo = state.blockTo,
-                    onTap = onTap,
+                    onTap = { u, b, v -> vm.tap(u, b, v) },
+                    barMenu = { m, v -> barActions(state, vm, m, v) },
                 )
             }
         }

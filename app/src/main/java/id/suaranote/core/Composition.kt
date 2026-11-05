@@ -5,10 +5,10 @@ package id.suaranote.core
  * sebagai titik di not angka). Panjang tiap simbol satu "potongan" (1, 2, atau 4 enam-belas); not yang lebih
  * panjang tersusun dari kepala + beberapa perpanjangan. Karena itu Hapus bisa membuang simbol terakhir saja.
  */
-data class Symbol(val midi: Int?, val dur16: Int, val ext: Boolean)
+data class Symbol(val midi: Int?, val dur16: Int, val ext: Boolean, val lyric: String? = null)
 
 /** Simbol not angka yang sudah dipotong di garis birama; [startUnit] mutlak dalam 1/16 sejak awal lagu. */
-data class Token(val midi: Int?, val dur16: Int, val ext: Boolean, val startUnit: Int)
+data class Token(val midi: Int?, val dur16: Int, val ext: Boolean, val startUnit: Int, val lyric: String? = null)
 
 object Chunks {
     /** Memecah durasi (1/16) per ketuk: 4, 4, ... lalu sisa (3 menjadi 2 + 1). */
@@ -105,7 +105,7 @@ data class Composition(val symbols: List<Symbol> = emptyList()) {
         for ((i, s) in symbols.withIndex()) {
             val end = pos + s.dur16
             if (unit > pos && unit < end) {
-                val first = Chunks.of(unit - pos).mapIndexed { k, c -> Symbol(s.midi, c, ext = s.ext || k > 0) }
+                val first = Chunks.of(unit - pos).mapIndexed { k, c -> Symbol(s.midi, c, ext = s.ext || k > 0, lyric = if (k == 0) s.lyric else null) }
                 val second = Chunks.of(end - unit).map { Symbol(s.midi, it, ext = true) }
                 return Composition(symbols.take(i) + first + second + symbols.drop(i + 1))
             }
@@ -177,6 +177,29 @@ data class Composition(val symbols: List<Symbol> = emptyList()) {
         return this
     }
 
+    /** Menghapus satuan [a, b) dan menggeser isi sesudahnya maju (hapus birama). */
+    fun deleteRange(a: Int, b: Int): Composition {
+        if (a >= totalUnits || b <= a) return this
+        val c = splitAt(a).splitAt(b)
+        val from = c.indexAt(a)
+        val to = c.indexAt(b)
+        return Composition(c.symbols.take(from) + c.symbols.drop(maxOf(from, to))).fixOrphans()
+    }
+
+    /** Memasang suku kata [text] pada not yang memuat [unit] (kosong/null = hapus). Rehat tidak bisa diberi suku kata. */
+    fun withLyric(unit: Int, text: String?): Composition {
+        val start = eventStart(unit)
+        var pos = 0
+        for ((i, s) in symbols.withIndex()) {
+            if (pos == start && !s.ext && s.midi != null) {
+                val l = text?.trim()?.ifEmpty { null }
+                return Composition(symbols.take(i) + s.copy(lyric = l) + symbols.drop(i + 1))
+            }
+            pos += s.dur16
+        }
+        return this
+    }
+
     /** Menempelkan [syms] di ujung (kepala pertama tetap kepala). */
     fun append(syms: List<Symbol>): Composition = Composition(symbols + syms).fixOrphans()
 
@@ -190,7 +213,7 @@ data class Composition(val symbols: List<Symbol> = emptyList()) {
             val hi = minOf(end, b)
             if (hi > lo) {
                 if (hi - lo == s.dur16) out += s
-                else out += Chunks.of(hi - lo).mapIndexed { k, c -> Symbol(s.midi, c, ext = (lo == pos && s.ext) || k > 0) }
+                else out += Chunks.of(hi - lo).mapIndexed { k, c -> Symbol(s.midi, c, ext = (lo == pos && s.ext) || k > 0, lyric = if (k == 0 && lo == pos) s.lyric else null) }
             }
             pos = end
         }
@@ -229,7 +252,8 @@ data class Composition(val symbols: List<Symbol> = emptyList()) {
                 for ((i, p) in pieces.withIndex()) {
                     val bar = pos / barLen
                     while (bars.size <= bar) bars += ArrayList<Token>()
-                    bars[bar] += Token(s.midi, p, s.ext || !first || i > 0, pos)
+                    val isExt = s.ext || !first || i > 0
+                    bars[bar] += Token(s.midi, p, isExt, pos, if (isExt) null else s.lyric)
                     pos += p
                 }
                 remaining -= take

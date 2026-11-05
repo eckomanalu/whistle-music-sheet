@@ -41,3 +41,9 @@ Workflow `.github/workflows/build-apk.yml` menjalankan tes unit lalu membuat APK
 - **Titik pilih**: ketuk not/bar untuk memilih titik. Not baru, rehat, sambung, dan hapus bekerja di titik itu (menyisip, not setelahnya bergeser). ▶ "Dari sini" memutar dari titik itu.
 - **Nomor bar** tampil di not balok dan not angka.
 - **Blok bar**: nyalakan "Blok bar", ketuk bar awal dan akhir, lalu **Salin**. Pilih bar tujuan lalu **Tempel: sisip** (menggeser isi) atau **Tempel: timpa** (menghapus not di bar tujuan). **Salin ke akhir** menempelkan blok ke bar terakhir.
+
+## Dropdown, menu bar, suku kata
+
+- **Nada dasar**, **Birama**, dan **Suara (lapisan)** berupa dropdown. Menambah/menghapus suara ada di dropdown Suara.
+- **Tekan lama sebuah bar** untuk menu: mulai seleksi, pilih akhir seleksi, salin, hapus bar terseleksi, tempel (sisip/timpa) di bar itu, salin ke bar terakhir, batalkan seleksi. Aksi berlaku pada suara bar yang ditekan.
+- **Suku kata**: isi "Suku kata aktif", lalu sentuh area di bawah angka pada not angka. Suku kata menempel pada not (ikut bergeser, tersalin, dan terhapus bersama not). Teks kosong + sentuh = hapus suku kata.

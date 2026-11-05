@@ -5,7 +5,18 @@ import android.graphics.Typeface
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.offset
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.Text
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.foundation.layout.height
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
@@ -25,6 +36,9 @@ import id.suaranote.render.LineOp
 import id.suaranote.render.Rendering
 import id.suaranote.render.TextOp
 import id.suaranote.render.TieOp
+
+/** Satu butir menu konteks bar. */
+class BarAction(val label: String, val enabled: Boolean = true, val run: () -> Unit)
 
 /** Menafsirkan daftar operasi gambar dari StaffRenderer / NumberedRenderer ke Canvas Compose. */
 private val PlayColor = Color(0xFFE65100) // simbol yang sedang berbunyi
@@ -47,7 +61,12 @@ fun RenderedCanvas(
     blockFrom: Int? = null,
     blockTo: Int? = null,
     onTap: ((unit: Int, bar: Boolean, voice: Int) -> Unit)? = null,
+    onLyricTap: ((unit: Int, voice: Int) -> Unit)? = null,
+    /** Menu konteks saat bar ditekan lama: (nomor bar dari 0, suara) -> aksi. */
+    barMenu: ((measure: Int, voice: Int) -> List<BarAction>)? = null,
 ) {
+    var menuAt by remember { mutableStateOf<Triple<Int, Int, Offset>?>(null) }
+    val haptic = LocalHapticFeedback.current
     val density = LocalDensity.current
     val glyphPaths = remember {
         Glyph.values().associateWith { PathParser().parsePathString(it.path).toPath() }
@@ -75,24 +94,37 @@ fun RenderedCanvas(
         arr
     }
     val tapModifier = if (onTap == null) Modifier else Modifier.pointerInput(rendering) {
-        detectTapGestures { p ->
-            val hit = rendering.hits.firstOrNull { p.x >= it.left && p.x < it.right && p.y >= it.top && p.y < it.bottom }
-            if (hit != null) {
-                onTap(hit.startUnit, false, hit.voice)
-            } else {
-                val bar = rendering.bars.firstOrNull { p.x >= it.left && p.x < it.right && p.y >= it.top && p.y < it.bottom }
-                if (bar != null) onTap(bar.startUnit, true, bar.voice)
-            }
-        }
+        detectTapGestures(
+            onTap = { p ->
+                val hit = rendering.hits.firstOrNull { p.x >= it.left && p.x < it.right && p.y >= it.top && p.y < it.bottom }
+                if (hit != null) {
+                    if (onLyricTap != null && p.y >= hit.lyricTop) onLyricTap(hit.startUnit, hit.voice)
+                    else onTap(hit.startUnit, false, hit.voice)
+                } else {
+                    val bar = rendering.bars.firstOrNull { p.x >= it.left && p.x < it.right && p.y >= it.top && p.y < it.bottom }
+                    if (bar != null) onTap(bar.startUnit, true, bar.voice)
+                }
+            },
+            onLongPress = { p ->
+                if (barMenu != null) {
+                    val bar = rendering.bars.firstOrNull { p.x >= it.left && p.x < it.right && p.y >= it.top && p.y < it.bottom }
+                    if (bar != null) {
+                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                        menuAt = Triple(bar.measure, bar.voice, p)
+                    }
+                }
+            },
+        )
     }
 
+    Box {
     Canvas(modifier.fillMaxWidth().height(heightDp).then(tapModifier)) {
         fun tint(b: id.suaranote.render.Bar, c: Color, alpha: Float) =
             drawRect(c.copy(alpha = alpha), Offset(b.left, b.top), androidx.compose.ui.geometry.Size(b.right - b.left, b.bottom - b.top))
         // latar: suara aktif (bila ada beberapa), blok terpilih, birama titik terpilih, simbol yang sedang berbunyi
         for (b in rendering.bars) {
             if (voiceCount > 1 && b.voice == activeVoice) tint(b, VoiceColors[b.voice % VoiceColors.size], 0.07f)
-            if (blockFrom != null && blockTo != null && b.measure in blockFrom..blockTo) tint(b, BlockColor, 0.22f)
+            if (blockFrom != null && blockTo != null && b.voice == activeVoice && b.measure in blockFrom..blockTo) tint(b, BlockColor, 0.22f)
             if (startUnit != null && startIsBar && b.voice == activeVoice && b.startUnit == startUnit) tint(b, StartColor, 0.14f)
         }
         if (playUnit != null) {
@@ -137,5 +169,20 @@ fun RenderedCanvas(
                 }
             }
         }
+    }
+    val m = menuAt
+    if (m != null && barMenu != null) {
+        Box(Modifier.offset { IntOffset(m.third.x.toInt(), m.third.y.toInt()) }) {
+            DropdownMenu(expanded = true, onDismissRequest = { menuAt = null }) {
+                for (a in barMenu(m.first, m.second)) {
+                    DropdownMenuItem(
+                        text = { Text(a.label) },
+                        enabled = a.enabled,
+                        onClick = { menuAt = null; a.run() },
+                    )
+                }
+            }
+        }
+    }
     }
 }

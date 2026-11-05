@@ -45,6 +45,8 @@ data class Hit(
     val bottom: Float,
     val ops: List<Int>,
     val voice: Int = 0,
+    /** Sentuhan dengan y >= nilai ini dianggap mengenai baris suku kata (bukan not). */
+    val lyricTop: Float = Float.MAX_VALUE,
 )
 
 /** Satu birama (untuk memilih awal pemutaran dari birama). */

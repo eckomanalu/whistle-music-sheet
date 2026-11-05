@@ -19,7 +19,7 @@ import id.suaranote.core.Token
 object NumberedRenderer {
     private const val PAD = 0.7f
     private const val MARGIN = 0.4f
-    private const val ROW_H = 3.4f
+    private const val ROW_H = 4.3f
     private const val BASELINE = 2.3f
     private const val CAP = 0.72f
     private const val LINE_STEP = 0.17f
@@ -141,14 +141,16 @@ object NumberedRenderer {
             for (v in 0 until nv) {
                 val by = baseline(ri, v)
                 val top = by - 1.7f * fs
-                val bottom = by + 0.8f * fs
+                val bottom = by + 2.0f * fs
+                val lyricTop = by + 0.95f * fs
                 for (mi in r) {
                     for (tk in tks[v][mi]) {
                         drawToken(tk, by, ops, fs)
+                        tk.t.lyric?.let { l -> tk.opIds += ops.size; ops += TextOp(l, tk.cx, by + 1.65f * fs, 0.5f * fs) }
                         val half = tk.widthFs / 2 * fs * tokStretch[v][mi]
                         hits += Hit(
                             tk.t.startUnit, tk.t.startUnit + tk.t.dur16,
-                            tk.cx - half, top, tk.cx + half, bottom, tk.opIds.toList(), v,
+                            tk.cx - half, top, tk.cx + half, bottom, tk.opIds.toList(), v, lyricTop,
                         )
                     }
                     bars += Bar(mi, mi * beatsPerBar * 4, barLeft[mi], top, barRight[mi], bottom, v)

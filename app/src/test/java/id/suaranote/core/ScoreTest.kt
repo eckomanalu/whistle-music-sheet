@@ -299,4 +299,31 @@ class ScoreTest {
         // geser oktaf tampilan
         assertEquals(NumberedNote(1, 0, 0), Numbered.of(55, MusicKey.G, octaveOffset = 1))
     }
+
+    @Test
+    fun deleteBarsShiftsLaterBarsForward() {
+        val c = song(60 to 16, 62 to 16, 64 to 16)
+        val d = c.deleteRange(16, 32)
+        assertEquals(listOf<Int?>(60, 64), d.events.map { it.midi })
+        assertEquals(32, d.totalUnits)
+        // menghapus di tengah not memotongnya
+        val e = song(60 to 16).deleteRange(4, 8)
+        assertEquals(12, e.totalUnits)
+        assertEquals(c, c.deleteRange(100, 120))
+    }
+
+    @Test
+    fun lyricsStickToNotesAndMoveWithInsertions() {
+        val c = song(60 to 4, 62 to 8, null to 4).withLyric(0, "Ba").withLyric(6, "ka").withLyric(12, "x")
+        // unit 6 ada di tengah not 62 (mulai 4) -> menempel di kepala not itu; rehat tidak bisa diberi suku kata
+        val t = c.tokens(4)[0]
+        assertEquals(listOf<String?>("Ba", "ka", null, null), t.map { it.lyric })
+        // sisip di awal: suku kata ikut bergeser
+        val ins = c.insertNote(0, 72, 4)
+        assertEquals(listOf<String?>(null, "Ba", "ka", null), ins.tokens(4)[0].map { it.lyric })
+        // hapus suku kata dengan teks kosong
+        assertEquals(null, c.withLyric(0, " ").tokens(4)[0][0].lyric)
+        // tersalin bersama blok
+        assertEquals("Ba", c.slice(0, 16).first().lyric)
+    }
 }

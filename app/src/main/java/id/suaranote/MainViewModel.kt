@@ -53,6 +53,8 @@ data class UiState(
     /** Isi papan klip (simbol sepanjang [clipboardBars] birama). */
     val clipboard: List<Symbol>? = null,
     val clipboardBars: Int = 0,
+    /** Suku kata yang dipasang saat menyentuh area di bawah angka not. */
+    val activeLyric: String = "",
     val metronomeOn: Boolean = false,
     /** Mode live: panjang not ditentukan lama tuts ditahan. */
     val liveMode: Boolean = false,
@@ -320,7 +322,7 @@ class MainViewModel : ViewModel() {
 
     /** Sentuhan pada notasi: memilih titik (mode biasa) atau birama untuk blok (mode blok). */
     fun tap(unit: Int, bar: Boolean, voice: Int) {
-        if (_state.value.blockMode) selectBlockBar(unit / _state.value.barLen, voice) else selectStart(unit, bar, voice)
+        selectStart(unit, bar, voice)
     }
 
     /**
@@ -352,11 +354,49 @@ class MainViewModel : ViewModel() {
         _state.update { it.copy(blockMode = !it.blockMode, blockAnchor = null) }
     }
 
-    private fun selectBlockBar(bar: Int, voice: Int) {
+    /** Menu bar: mulai seleksi di [bar] pada [voice]. */
+    fun selectBar(bar: Int, voice: Int) {
+        _state.update { it.copy(activeVoice = voice, blockFrom = bar, blockTo = bar, blockAnchor = bar) }
+    }
+
+    /** Menu bar: ujung seleksi dipindah ke [bar] (awal seleksi tetap). */
+    fun extendSelectionTo(bar: Int, voice: Int) {
         _state.update {
-            val a = it.blockAnchor
-            if (a == null) it.copy(activeVoice = voice, blockFrom = bar, blockTo = bar, blockAnchor = bar)
-            else it.copy(activeVoice = voice, blockFrom = minOf(a, bar), blockTo = maxOf(a, bar), blockAnchor = null)
+            val a = it.blockAnchor ?: it.blockFrom ?: bar
+            it.copy(activeVoice = voice, blockFrom = minOf(a, bar), blockTo = maxOf(a, bar), blockAnchor = a)
+        }
+    }
+
+    /** Menu bar: hapus bar terseleksi (isi sesudahnya maju) pada suara aktif. */
+    fun deleteBlock() {
+        val s = _state.value
+        val from = s.blockFrom ?: return fail("Pilih bar dulu (tekan lama pada bar).")
+        val to = s.blockTo ?: from
+        editActive { c, _ -> c.deleteRange(from * s.barLen, (to + 1) * s.barLen) to null }
+        clearBlock()
+    }
+
+    /** Menu bar: tempel papan klip di awal [bar] pada [voice]; [overwrite] false = sisip, true = timpa. */
+    fun pasteAtBar(bar: Int, voice: Int, overwrite: Boolean) {
+        _state.update { it.copy(activeVoice = voice, startUnit = bar * it.barLen, startIsBar = true) }
+        paste(overwrite)
+    }
+
+    /** Menu bar: salin seleksi lalu tempel setelah bar terakhir pada [voice]. */
+    fun copyToEndOf(voice: Int) {
+        _state.update { it.copy(activeVoice = voice) }
+        copyBlockToEnd()
+    }
+
+    fun setActiveLyric(text: String) {
+        _state.update { it.copy(activeLyric = text) }
+    }
+
+    /** Pasang suku kata aktif pada not di [unit] pada [voice] (teks kosong = hapus suku kata not itu). */
+    fun placeLyric(unit: Int, voice: Int) {
+        _state.update { st ->
+            val v = voice.coerceIn(0, st.score.voices.size - 1)
+            withScore(st, st.score.withVoice(v, st.score.voices[v].withLyric(unit, st.activeLyric)))
         }
     }
 
