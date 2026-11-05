@@ -1,21 +1,25 @@
 package id.suaranote.ui
 
-import android.Manifest
-import android.content.pm.PackageManager
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBarsPadding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -25,150 +29,84 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.Switch
-import androidx.compose.material3.LinearProgressIndicator
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalClipboardManager
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.AnnotatedString
-import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import id.suaranote.MainViewModel
-import id.suaranote.PlayWhat
 import id.suaranote.UiState
 import id.suaranote.core.MusicKey
 import id.suaranote.core.NotationText
+import id.suaranote.core.Spelling
 import id.suaranote.render.NumberedRenderer
 import id.suaranote.render.StaffRenderer
 
 private val Ink = Color(0xFF1B1B1F)
 private val RecordRed = Color(0xFFC62828)
+private const val FIRST_MIDI = 60 // C4
+private const val LAST_MIDI = 84 // C6
 
 @Composable
 fun MainScreen(vm: MainViewModel = viewModel()) {
     val state by vm.state.collectAsStateWithLifecycle()
-    val context = LocalContext.current
+    LifecycleEventEffect(Lifecycle.Event.ON_STOP) { vm.stopSong() }
 
-    val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-        if (granted) vm.start()
-        else vm.showError("Izin mikrofon ditolak. Aktifkan di Pengaturan > Aplikasi > SuaraNote > Izin.")
-    }
-
-    // Android membisukan mikrofon untuk aplikasi di latar belakang, jadi rekaman dihentikan.
-    LifecycleEventEffect(Lifecycle.Event.ON_STOP) { vm.stop() }
-
-    fun toggleRecording() {
-        if (state.recording) {
-            vm.stop()
-        } else if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) ==
-            PackageManager.PERMISSION_GRANTED
+    Column(Modifier.fillMaxSize().systemBarsPadding()) {
+        Column(
+            Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            vm.start()
-        } else {
-            permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
-        }
-    }
-
-    Column(
-        Modifier
-            .systemBarsPadding()
-            .verticalScroll(rememberScrollState())
-            .padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        Text("SuaraNote", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-        Text(
-            "Siulkan atau dengungkan satu bagian lagu (satu nada pada satu waktu), lalu tekan Berhenti. Rekaman dibersihkan dan dianalisis utuh, baru notasinya ditulis.",
-            style = MaterialTheme.typography.bodyMedium,
-        )
-
-        SettingsCard(state, vm)
-        RecordCard(state)
-
-        Button(
-            onClick = { toggleRecording() },
-            modifier = Modifier.fillMaxWidth().height(56.dp),
-            enabled = !state.processing,
-            colors = ButtonDefaults.buttonColors(containerColor = if (state.recording) Ink else RecordRed),
-        ) {
-            Text(if (state.recording) "Berhenti" else if (state.hasRecording) "Rekam ulang" else "Rekam", fontSize = 18.sp)
-        }
-
-        state.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-
-        if (state.hasRecording && !state.processing) PlayCard(state, vm)
-        if (state.hasRecording && !state.processing && state.contour.isNotEmpty()) ContourCard(state)
-
-        if (state.hasRecording && !state.processing) {
-            if (state.measures.isEmpty()) {
-                Text("Tidak ada nada yang terdeteksi. Coba lebih dekat ke mikrofon (sekitar 10–20 cm), di tempat yang tenang, dengan nada yang ditahan jelas.")
+            Text("SuaraNote", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+            SettingsCard(state, vm)
+            if (state.isEmpty) {
+                Text(
+                    "Pilih panjang nada, lalu tekan tuts piano di bawah. Not balok dan not angka muncul langsung. " +
+                        "Tombol Hapus selalu menghapus satu nada paling akhir.",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
             } else {
                 NumberedCard(state)
                 StaffCard(state)
             }
+            state.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
         }
+        InputPanel(state, vm)
     }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun SettingsCard(state: UiState, vm: MainViewModel) {
-    val s = state.shown
-    val u = state.settings
+    val s = state.settings
     Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text(
-                "Nada dasar (1 = ${s.key.label})" + if (u.autoKey && state.hasRecording) " · terdeteksi" else "",
-                fontWeight = FontWeight.Medium,
-            )
+            Text("Nada dasar (1 = ${s.key.label})", fontWeight = FontWeight.Medium)
             Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                FilterChip(
-                    selected = u.autoKey,
-                    onClick = { vm.updateSettings { it.copy(autoKey = true) } },
-                    label = { Text("Otomatis") },
-                )
                 for (k in MusicKey.values()) {
                     FilterChip(
-                        selected = !u.autoKey && u.key == k,
-                        onClick = { vm.updateSettings { it.copy(autoKey = false, key = k) } },
+                        selected = s.key == k,
+                        onClick = { vm.updateSettings { it.copy(key = k) } },
                         label = { Text(k.label) },
                     )
                 }
             }
-
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween) {
-                Text(
-                    "Tempo otomatis" + if (u.autoTempo && state.hasRecording) " (${state.effBpm} ketuk/menit)" else "",
-                    fontWeight = FontWeight.Medium,
-                )
-                Switch(
-                    checked = u.autoTempo,
-                    onCheckedChange = { v -> vm.updateSettings { it.copy(autoTempo = v, bpm = if (v) it.bpm else state.effBpm) } },
-                )
-            }
-            if (!u.autoTempo) {
-                Stepper("Tempo: ${u.bpm} ketuk/menit",
-                    onMinus = { vm.updateSettings { it.copy(bpm = (it.bpm - 5).coerceAtLeast(40)) } },
-                    onPlus = { vm.updateSettings { it.copy(bpm = (it.bpm + 5).coerceAtMost(200)) } })
-            }
-
             Text("Birama", fontWeight = FontWeight.Medium)
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 for (b in listOf(2, 3, 4)) {
@@ -179,32 +117,14 @@ private fun SettingsCard(state: UiState, vm: MainViewModel) {
                     )
                 }
             }
-
+            Stepper("Tempo putar: ${s.bpm} ketuk/menit",
+                onMinus = { vm.updateSettings { it.copy(bpm = (it.bpm - 5).coerceAtLeast(40)) } },
+                onPlus = { vm.updateSettings { it.copy(bpm = (it.bpm + 5).coerceAtMost(200)) } })
             Stepper(
                 "Geser oktaf not angka: " + (if (s.octaveOffset > 0) "+" else "") + s.octaveOffset,
                 onMinus = { vm.updateSettings { it.copy(octaveOffset = (it.octaveOffset - 1).coerceAtLeast(-2)) } },
                 onPlus = { vm.updateSettings { it.copy(octaveOffset = (it.octaveOffset + 1).coerceAtMost(2)) } },
             )
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween) {
-                Text("Pembersih derau", fontWeight = FontWeight.Medium)
-                Switch(checked = s.denoise, onCheckedChange = { v -> vm.updateSettings { it.copy(denoise = v) } })
-            }
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween) {
-                Column(Modifier.weight(1f)) {
-                    Text("Kalibrasi nada otomatis", fontWeight = FontWeight.Medium)
-                    Text("Bila Anda konsisten sedikit sharp/flat, nada digeser ke tala standar.",
-                        style = MaterialTheme.typography.bodySmall)
-                }
-                Switch(checked = s.autoTune, onCheckedChange = { v -> vm.updateSettings { it.copy(autoTune = v) } })
-            }
-            if (state.hasRecording) {
-                Text(
-                    "Tempo, birama, nada dasar, dan oktaf bisa diubah setelah merekam; notasi langsung dihitung ulang.",
-                    style = MaterialTheme.typography.bodySmall,
-                )
-            }
         }
     }
 }
@@ -221,66 +141,105 @@ private fun Stepper(label: String, onMinus: () -> Unit, onPlus: () -> Unit) {
     }
 }
 
+
+private val DURATION_LABELS = listOf(16 to "4", 12 to "3", 8 to "2", 6 to "1½", 4 to "1", 3 to "¾", 2 to "½", 1 to "¼")
+
+/** Bagian bawah layar: panjang nada, tombol Rehat/Hapus/Putar, dan tuts piano. */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun RecordCard(state: UiState) {
-    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)) {
-        Column(Modifier.fillMaxWidth().padding(12.dp), horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            when {
-                state.recording -> {
-                    val m = (state.elapsedSec / 60).toInt()
-                    val sec = (state.elapsedSec % 60).toInt()
-                    Text("Merekam  %d:%02d".format(m, sec), style = MaterialTheme.typography.titleMedium, color = RecordRed)
-                    LinearProgressIndicator(progress = { state.level.coerceIn(0f, 1f) }, modifier = Modifier.fillMaxWidth())
-                    Text("Notasi ditulis setelah Anda menekan Berhenti.", style = MaterialTheme.typography.bodySmall)
-                }
-                state.processing -> {
-                    CircularProgressIndicator()
-                    Text("Membersihkan derau dan menganalisis nada…")
-                }
-                else -> {
-                    Text("Siap merekam", fontWeight = FontWeight.Medium)
-                    state.tuningCents?.let {
-                        if (it != 0) Text(
-                            "Rata-rata nada Anda ${if (it > 0) "+$it" else "$it"} sen dari tala standar.",
-                            style = MaterialTheme.typography.bodySmall,
-                        )
-                    }
-                }
+private fun InputPanel(state: UiState, vm: MainViewModel) {
+    Column(
+        Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surfaceVariant).padding(8.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Text("Panjang nada (ketuk)", style = MaterialTheme.typography.labelMedium)
+        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            for ((d, label) in DURATION_LABELS) {
+                FilterChip(
+                    selected = state.selectedDur16 == d,
+                    onClick = { vm.selectDuration(d) },
+                    label = { Text(label, fontSize = 16.sp) },
+                )
+            }
+        }
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedButton(onClick = { vm.addRest() }, modifier = Modifier.weight(1f), contentPadding = PaddingValues(4.dp)) {
+                Text("Rehat")
+            }
+            Button(
+                onClick = { vm.deleteLast() },
+                enabled = !state.isEmpty,
+                modifier = Modifier.weight(1f),
+                colors = ButtonDefaults.buttonColors(containerColor = RecordRed),
+                contentPadding = PaddingValues(4.dp),
+            ) { Text("⌫ Hapus") }
+            OutlinedButton(
+                onClick = { vm.togglePlay() },
+                enabled = !state.isEmpty,
+                modifier = Modifier.weight(1f),
+                contentPadding = PaddingValues(4.dp),
+            ) { Text(if (state.playing) "■ Berhenti" else "▶ Putar") }
+        }
+        PianoKeyboard(onKey = { vm.pressKey(it) })
+    }
+}
+
+private fun isBlack(midi: Int) = Math.floorMod(midi, 12) in intArrayOf(1, 3, 6, 8, 10)
+
+/** Tuts C4 sampai C6 (dua oktaf). Not ditambahkan begitu tuts disentuh. */
+@Composable
+private fun PianoKeyboard(onKey: (Int) -> Unit) {
+    val whites = (FIRST_MIDI..LAST_MIDI).filter { !isBlack(it) }
+    BoxWithConstraints(Modifier.fillMaxWidth().height(170.dp)) {
+        val whiteW = maxWidth / whites.size
+        val blackW = whiteW * 0.62f
+        for ((i, m) in whites.withIndex()) {
+            Key(
+                midi = m, black = false, onKey = onKey,
+                modifier = Modifier.offset(x = whiteW * i).width(whiteW).height(170.dp),
+                label = if (m % 12 == 0) "C${m / 12 - 1}" else null,
+            )
+        }
+        for ((i, m) in whites.withIndex()) {
+            val next = m + 1
+            if (next <= LAST_MIDI && isBlack(next)) {
+                Key(
+                    midi = next, black = true, onKey = onKey,
+                    modifier = Modifier.offset(x = whiteW * (i + 1) - blackW / 2).width(blackW).height(104.dp),
+                    label = null,
+                )
             }
         }
     }
 }
 
 @Composable
-private fun PlayCard(state: UiState, vm: MainViewModel) {
-    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
-        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("Dengarkan & bandingkan", fontWeight = FontWeight.Medium)
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                for ((what, label) in listOf(PlayWhat.ORIGINAL to "Asli", PlayWhat.CLEAN to "Bersih", PlayWhat.RESULT to "Hasil")) {
-                    val on = state.playing == what
-                    val enabled = what != PlayWhat.RESULT || state.measures.isNotEmpty()
-                    OutlinedButton(
-                        onClick = { vm.togglePlay(what) },
-                        enabled = enabled,
-                        modifier = Modifier.weight(1f),
-                        contentPadding = PaddingValues(horizontal = 4.dp),
-                    ) { Text(if (on) "■ $label" else "▶ $label") }
-                }
-            }
-            Text(
-                "Asli = rekaman mentah. Bersih = setelah derau dibuang. Hasil = nada yang tertulis di notasi. " +
-                    "Bandingkan Asli dengan Hasil untuk menilai ketepatan.",
-                style = MaterialTheme.typography.bodySmall,
-            )
-        }
+private fun Key(midi: Int, black: Boolean, onKey: (Int) -> Unit, modifier: Modifier, label: String?) {
+    var down by remember { mutableStateOf(false) }
+    val fill = when {
+        black -> if (down) Color(0xFF5A5A66) else Color(0xFF1B1B1F)
+        else -> if (down) Color(0xFFD0C4F2) else Color.White
+    }
+    Box(
+        modifier
+            .background(fill, RoundedCornerShape(bottomStart = 4.dp, bottomEnd = 4.dp))
+            .border(1.dp, Color(0xFF555560), RoundedCornerShape(bottomStart = 4.dp, bottomEnd = 4.dp))
+            .pointerInput(midi) {
+                detectTapGestures(onPress = {
+                    down = true
+                    onKey(midi)
+                    try { tryAwaitRelease() } finally { down = false }
+                })
+            },
+        contentAlignment = Alignment.BottomCenter,
+    ) {
+        if (label != null) Text(label, fontSize = 9.sp, color = Ink, modifier = Modifier.padding(bottom = 4.dp))
     }
 }
 
 @Composable
 private fun NumberedCard(state: UiState) {
-    val s = state.shown
+    val s = state.settings
     val clipboard = LocalClipboardManager.current
     Card(colors = CardDefaults.cardColors(containerColor = Color.White)) {
         Column(Modifier.padding(12.dp)) {
@@ -306,7 +265,7 @@ private fun NumberedCard(state: UiState) {
 
 @Composable
 private fun StaffCard(state: UiState) {
-    val s = state.shown
+    val s = state.settings
     Card(colors = CardDefaults.cardColors(containerColor = Color.White)) {
         Column(Modifier.padding(12.dp)) {
             Text("Not balok", fontWeight = FontWeight.Bold, color = Ink)
@@ -323,45 +282,3 @@ private fun StaffCard(state: UiState) {
     }
 }
 
-/** Titik = nada terukur tiap frame; garis = nada tepat. Titik yang jauh dari garis = nyanyian/deteksi meleset. */
-@Composable
-private fun ContourCard(state: UiState) {
-    val key = state.effKey
-    val c = state.contour
-    var lo = Float.MAX_VALUE
-    var hi = -Float.MAX_VALUE
-    for (v in c) if (!v.isNaN()) { lo = minOf(lo, v); hi = maxOf(hi, v) }
-    if (lo > hi) return
-    val loI = kotlin.math.floor(lo - 0.5f).toInt()
-    val hiI = kotlin.math.ceil(hi + 0.5f).toInt()
-    val measurer = androidx.compose.ui.text.rememberTextMeasurer()
-    val lineColor = MaterialTheme.colorScheme.outlineVariant
-    val dotColor = MaterialTheme.colorScheme.primary
-    Card(colors = CardDefaults.cardColors(containerColor = Color.White)) {
-        Column(Modifier.padding(12.dp)) {
-            Text("Kontur nada", fontWeight = FontWeight.Bold, color = Ink)
-            Text("Titik di tengah garis = tepat. Titik di antara dua garis = meleset.", style = MaterialTheme.typography.bodySmall, color = Ink)
-            androidx.compose.foundation.Canvas(Modifier.fillMaxWidth().height(180.dp)) {
-                val left = 34.dp.toPx()
-                val w = size.width - left
-                val span = (hiI - loI).coerceAtLeast(1).toFloat()
-                fun y(m: Float) = size.height * (1f - (m - loI) / span)
-                for (m in loI..hiI) {
-                    val yy = y(m.toFloat())
-                    drawLine(lineColor, androidx.compose.ui.geometry.Offset(left, yy), androidx.compose.ui.geometry.Offset(size.width, yy), 1f)
-                    if (span <= 24 || m % 12 == 0) {
-                        drawText(measurer, id.suaranote.core.Spelling.noteName(m, key),
-                            topLeft = androidx.compose.ui.geometry.Offset(0f, yy - 8.dp.toPx()),
-                            style = androidx.compose.ui.text.TextStyle(fontSize = 9.sp, color = Ink))
-                    }
-                }
-                val n = c.size
-                for (i in 0 until n) {
-                    val v = c[i]
-                    if (v.isNaN()) continue
-                    drawCircle(dotColor, 1.8.dp.toPx(), androidx.compose.ui.geometry.Offset(left + w * i / n, y(v)))
-                }
-            }
-        }
-    }
-}

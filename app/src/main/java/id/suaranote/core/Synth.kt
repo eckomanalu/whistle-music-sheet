@@ -3,11 +3,14 @@ package id.suaranote.core
 import kotlin.math.PI
 import kotlin.math.sin
 
-/** Memutar ulang hasil transkripsi sebagai nada sintetis, untuk dibandingkan dengan rekaman. */
+/** Nada sintetis untuk pratinjau tuts dan pemutaran lagu. */
 object Synth {
     const val RATE = 22050
 
-    /** [detuneSemitones]: geser seluruh nada agar sejajar dengan tala asli penyanyi (kalibrasi). */
+    /** Satu nada tunggal, untuk bunyi saat tuts ditekan. */
+    fun note(midi: Int, seconds: Double): ShortArray =
+        render(listOf(Measure(listOf(NoteEvent(midi, 1)))), (60.0 / (seconds * 4)).toInt().coerceAtLeast(1))
+
     fun render(measures: List<Measure>, bpm: Int, detuneSemitones: Double = 0.0): ShortArray {
         class Item(val midi: Int?, var dur: Int)
         val items = ArrayList<Item>()
