@@ -24,3 +24,8 @@ Tempo, birama, nada dasar, dan geser oktaf bisa diubah setelah merekam; notasi d
 
 ## Kredit
 Bentuk glyph notasi berasal dari font Bravura (c) Steinberg Media Technologies GmbH, SIL Open Font License 1.1.
+
+## Build APK otomatis
+Workflow `.github/workflows/build-apk.yml` menjalankan tes unit lalu membuat APK debug pada setiap push ke `main`
+(atau manual lewat tab Actions > Build APK > Run workflow). Unduh APK dari bagian **Artifacts** pada run tersebut
+(`SuaraNote-debug-apk`) dan pasang di HP (aktifkan "pasang dari sumber tidak dikenal").
