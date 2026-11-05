@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import id.suaranote.audio.AudioPlayer
 import id.suaranote.audio.Metronome
 import id.suaranote.core.Composition
+import id.suaranote.core.LiveTiming
 import id.suaranote.core.Measure
 import id.suaranote.core.ScoreSettings
 import id.suaranote.core.Synth
@@ -27,6 +28,10 @@ data class UiState(
     val measures: List<Measure> = emptyList(),
     val playing: Boolean = false,
     val metronomeOn: Boolean = false,
+    /** Mode live: panjang not ditentukan lama tuts ditahan. */
+    val liveMode: Boolean = false,
+    /** Kelipatan pembulatan mode live dalam 1/16 (1, 2 = 1/8, atau 4 = 1/4). */
+    val liveGrid: Int = 2,
     val error: String? = null,
 ) {
     val isEmpty: Boolean get() = composition.events.isEmpty()
@@ -40,16 +45,103 @@ class MainViewModel : ViewModel() {
     private var previewJob: Job? = null
     private var metronomeJob: Job? = null
 
+    private class Live(val midi: Int, val pressNs: Long, var releaseNs: Long? = null)
+
+    private var live: Live? = null
+    private var tickJob: Job? = null
+    private var sustainJob: Job? = null
+
+    private fun setComposition(c: Composition) {
+        _state.update { it.copy(composition = c, measures = c.measures(it.settings.beatsPerBar), error = null) }
+    }
+
+    private fun endLive() {
+        live = null
+        tickJob?.cancel()
+        sustainJob?.cancel()
+    }
+
     private fun edit(change: (Composition) -> Composition) {
         stopSong()
+        endLive()
         _state.update {
             val c = change(it.composition)
             it.copy(composition = c, measures = c.measures(it.settings.beatsPerBar), error = null)
         }
     }
 
+    fun setLiveMode(on: Boolean) {
+        endLive()
+        _state.update { it.copy(liveMode = on) }
+    }
+
+    fun setLiveGrid(grid: Int) {
+        _state.update { it.copy(liveGrid = grid) }
+    }
+
+    /** Tuts disentuh. Mode biasa: tambah not berpanjang terpilih. Mode live: not mulai dan memanjang selama ditahan. */
+    fun keyDown(midi: Int) {
+        if (_state.value.liveMode) liveDown(midi) else pressKey(midi)
+    }
+
+    fun keyUp(midi: Int) {
+        if (_state.value.liveMode) liveUp(midi)
+    }
+
+    private fun liveDown(midi: Int) {
+        val now = System.nanoTime()
+        val s = _state.value
+        val unit = 60.0 / s.settings.bpm / 4
+        val grid = s.liveGrid
+        stopSong()
+        previewJob?.cancel()
+        sustainJob?.cancel()
+        tickJob?.cancel()
+        var c = s.composition
+        val prev = live
+        if (prev != null && c.events.isNotEmpty()) {
+            val release = prev.releaseNs ?: now
+            val (note, rest) = LiveTiming.settle((release - prev.pressNs) / 1e9, (now - prev.pressNs) / 1e9, unit, grid)
+            c = c.replaceLast(note)
+            if (rest > 0) c = c.add(null, rest)
+        }
+        c = c.add(midi, grid)
+        live = Live(midi, now)
+        setComposition(c)
+        sustainJob = viewModelScope.launch {
+            try {
+                AudioPlayer.play(withContext(Dispatchers.Default) { Synth.note(midi, 3.0) }, Synth.RATE)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+            }
+        }
+        tickJob = viewModelScope.launch {
+            while (true) {
+                kotlinx.coroutines.delay(40)
+                val l = live ?: break
+                if (l.releaseNs != null) break
+                val u = LiveTiming.quantize((System.nanoTime() - l.pressNs) / 1e9, unit, grid)
+                val cur = _state.value.composition
+                if (cur.events.lastOrNull()?.dur16 != u) setComposition(cur.replaceLast(u))
+            }
+        }
+    }
+
+    private fun liveUp(midi: Int) {
+        val l = live ?: return
+        if (l.midi != midi || l.releaseNs != null) return
+        val now = System.nanoTime()
+        l.releaseNs = now
+        tickJob?.cancel()
+        sustainJob?.cancel()
+        val s = _state.value
+        val unit = 60.0 / s.settings.bpm / 4
+        setComposition(s.composition.replaceLast(LiveTiming.quantize((now - l.pressNs) / 1e9, unit, s.liveGrid)))
+    }
+
     /** Tuts ditekan: tambahkan not dengan panjang terpilih di ujung lagu dan bunyikan. */
-    fun pressKey(midi: Int) {
+    private fun pressKey(midi: Int) {
         val dur = _state.value.selectedDur16
         edit { it.add(midi, dur) }
         preview(midi, dur)
@@ -144,6 +236,7 @@ class MainViewModel : ViewModel() {
     /** Dipanggil saat aplikasi ke latar belakang: hentikan semua bunyi. */
     fun silence() {
         stopSong()
+        endLive()
         if (_state.value.metronomeOn) { _state.update { it.copy(metronomeOn = false) }; syncMetronome() }
     }
 
@@ -151,5 +244,7 @@ class MainViewModel : ViewModel() {
         songJob?.cancel()
         previewJob?.cancel()
         metronomeJob?.cancel()
+        sustainJob?.cancel()
+        tickJob?.cancel()
     }
 }

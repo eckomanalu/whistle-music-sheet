@@ -72,8 +72,31 @@ class ScoreTest {
     }
 
     @Test(expected = IllegalArgumentException::class)
-    fun rejectsNonStandardDuration() {
-        Composition().add(60, 5)
+    fun rejectsDurationOutOfRange() {
+        Composition().add(60, 0)
+    }
+
+    @Test
+    fun liveQuantizeAndSettle() {
+        val unit = 60.0 / 90 / 4 // 90 bpm
+        assertEquals(1, LiveTiming.quantize(0.17, unit, 1))
+        assertEquals(2, LiveTiming.quantize(0.05, unit, 2)) // minimal satu kotak
+        assertEquals(4, LiveTiming.quantize(0.7, unit, 2)) // satu ketuk
+        assertEquals(64, LiveTiming.quantize(60.0, unit, 2)) // dibatasi
+        assertEquals(4 to 0, LiveTiming.settle(0.6, 0.67, unit, 2)) // legato dengan celah kecil
+        assertEquals(2 to 2, LiveTiming.settle(0.2, 0.67, unit, 2)) // staccato: not 1/8 + rehat 1/8
+        assertEquals(4 to 0, LiveTiming.settle(0.8, 0.67, unit, 2)) // tumpang tindih
+    }
+
+    @Test
+    fun liveGrowingNoteAndLongNoteTies() {
+        var c = Composition().add(60, 2)
+        c = c.replaceLast(6).replaceLast(20)
+        assertEquals(listOf(NoteEvent(60, 20)), c.events)
+        val m = c.measures(4) // 20 > 16: satu birama penuh + 4, diikat
+        assertEquals(listOf(NoteEvent(60, 16, tiedToNext = true)), m[0].events)
+        assertEquals(listOf(NoteEvent(60, 4)), m[1].events)
+        assertEquals(Composition(), Composition().replaceLast(4))
     }
 
     @Test

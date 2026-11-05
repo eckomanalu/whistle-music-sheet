@@ -6,8 +6,15 @@ package id.suaranote.core
  */
 data class Composition(val events: List<NoteEvent> = emptyList()) {
     fun add(midi: Int?, dur16: Int): Composition {
-        require(dur16 in DURATIONS) { "Panjang not tidak baku: $dur16" }
+        require(dur16 in 1..MAX_DUR16) { "Panjang not di luar batas: $dur16" }
         return Composition(events + NoteEvent(midi, dur16))
+    }
+
+    /** Mengubah panjang not/rehat paling akhir (dipakai mode live saat tuts masih ditahan). */
+    fun replaceLast(dur16: Int): Composition {
+        require(dur16 in 1..MAX_DUR16) { "Panjang not di luar batas: $dur16" }
+        if (events.isEmpty()) return this
+        return Composition(events.dropLast(1) + events.last().copy(dur16 = dur16))
     }
 
     /** Menghapus satu not/rehat paling akhir; tidak berbuat apa-apa bila kosong. */
@@ -18,6 +25,9 @@ data class Composition(val events: List<NoteEvent> = emptyList()) {
     companion object {
         /** Panjang yang bisa dipilih: 4, 3, 2, 1,5, 1, 0,75, 0,5, 0,25 ketuk. */
         val DURATIONS = listOf(16, 12, 8, 6, 4, 3, 2, 1)
+
+        /** Batas panjang satu not (4 birama 4/4); lebih panjang dari satu birama otomatis diikat. */
+        const val MAX_DUR16 = 64
     }
 }
 

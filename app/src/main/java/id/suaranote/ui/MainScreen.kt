@@ -149,14 +149,41 @@ private fun InputPanel(state: UiState, vm: MainViewModel) {
         Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surfaceVariant).padding(8.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        Text("Panjang nada (ketuk)", style = MaterialTheme.typography.labelMedium)
-        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            for ((d, label) in DURATION_LABELS) {
-                FilterChip(
-                    selected = state.selectedDur16 == d,
-                    onClick = { vm.selectDuration(d) },
-                    label = { Text(label, fontSize = 16.sp) },
-                )
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            FilterChip(
+                selected = state.liveMode,
+                onClick = { vm.setLiveMode(!state.liveMode) },
+                label = { Text(if (state.liveMode) "Mode live ●" else "Mode live") },
+            )
+            Text(
+                if (state.liveMode) "Tahan tuts selama durasi yang diinginkan" else "Panjang nada (ketuk)",
+                style = MaterialTheme.typography.labelMedium,
+            )
+        }
+        if (state.liveMode) {
+            Row(Modifier.horizontalScroll(rememberScrollState()), verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text("Pembulatan:", style = MaterialTheme.typography.labelMedium)
+                for ((g, label) in listOf(1 to "¼ ketuk", 2 to "½ ketuk", 4 to "1 ketuk")) {
+                    FilterChip(
+                        selected = state.liveGrid == g,
+                        onClick = { vm.setLiveGrid(g) },
+                        label = { Text(label) },
+                    )
+                }
+            }
+            if (!state.metronomeOn) {
+                Text("Nyalakan Metronom agar ketukan Anda stabil.", style = MaterialTheme.typography.bodySmall)
+            }
+        } else {
+            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                for ((d, label) in DURATION_LABELS) {
+                    FilterChip(
+                        selected = state.selectedDur16 == d,
+                        onClick = { vm.selectDuration(d) },
+                        label = { Text(label, fontSize = 16.sp) },
+                    )
+                }
             }
         }
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
@@ -195,7 +222,7 @@ private fun InputPanel(state: UiState, vm: MainViewModel) {
                 contentPadding = PaddingValues(4.dp),
             ) { Text(if (state.playing) "■ Berhenti" else "▶ Putar") }
         }
-        PianoKeyboard(onKey = { vm.pressKey(it) })
+        PianoKeyboard(onDown = { vm.keyDown(it) }, onUp = { vm.keyUp(it) })
     }
 }
 
@@ -203,14 +230,14 @@ private fun isBlack(midi: Int) = Math.floorMod(midi, 12) in intArrayOf(1, 3, 6, 
 
 /** Tuts C4 sampai C6 (dua oktaf). Not ditambahkan begitu tuts disentuh. */
 @Composable
-private fun PianoKeyboard(onKey: (Int) -> Unit) {
+private fun PianoKeyboard(onDown: (Int) -> Unit, onUp: (Int) -> Unit) {
     val whites = (FIRST_MIDI..LAST_MIDI).filter { !isBlack(it) }
     BoxWithConstraints(Modifier.fillMaxWidth().height(170.dp)) {
         val whiteW = maxWidth / whites.size
         val blackW = whiteW * 0.62f
         for ((i, m) in whites.withIndex()) {
             Key(
-                midi = m, black = false, onKey = onKey,
+                midi = m, black = false, onDown = onDown, onUp = onUp,
                 modifier = Modifier.offset(x = whiteW * i).width(whiteW).height(170.dp),
                 label = if (m % 12 == 0) "C${m / 12 - 1}" else null,
             )
@@ -219,7 +246,7 @@ private fun PianoKeyboard(onKey: (Int) -> Unit) {
             val next = m + 1
             if (next <= LAST_MIDI && isBlack(next)) {
                 Key(
-                    midi = next, black = true, onKey = onKey,
+                    midi = next, black = true, onDown = onDown, onUp = onUp,
                     modifier = Modifier.offset(x = whiteW * (i + 1) - blackW / 2).width(blackW).height(104.dp),
                     label = null,
                 )
@@ -229,7 +256,7 @@ private fun PianoKeyboard(onKey: (Int) -> Unit) {
 }
 
 @Composable
-private fun Key(midi: Int, black: Boolean, onKey: (Int) -> Unit, modifier: Modifier, label: String?) {
+private fun Key(midi: Int, black: Boolean, onDown: (Int) -> Unit, onUp: (Int) -> Unit, modifier: Modifier, label: String?) {
     var down by remember { mutableStateOf(false) }
     val fill = when {
         black -> if (down) Color(0xFF5A5A66) else Color(0xFF1B1B1F)
@@ -242,8 +269,8 @@ private fun Key(midi: Int, black: Boolean, onKey: (Int) -> Unit, modifier: Modif
             .pointerInput(midi) {
                 detectTapGestures(onPress = {
                     down = true
-                    onKey(midi)
-                    try { tryAwaitRelease() } finally { down = false }
+                    onDown(midi)
+                    try { tryAwaitRelease() } finally { down = false; onUp(midi) }
                 })
             },
         contentAlignment = Alignment.BottomCenter,
