@@ -30,4 +30,11 @@ data class TranscriptionSettings(
     val denoise: Boolean = true,
     /** Kalibrasi tala: koreksi pergeseran nada yang konsisten sebelum dibulatkan ke setengah nada. */
     val autoTune: Boolean = true,
+    /** Nada dasar ditebak dari melodi (profil Krumhansl-Schmuckler); [key] dipakai bila false. */
+    val autoKey: Boolean = false,
+    /** Tempo diperkirakan dari jarak antar-not; [bpm] dipakai bila false. */
+    val autoTempo: Boolean = false,
 )
+
+/** Hasil transkripsi lengkap: birama + tempo dan nada dasar yang dipakai/terdeteksi. */
+data class Transcription(val measures: List<Measure>, val bpm: Int, val key: MusicKey)

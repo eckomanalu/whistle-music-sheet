@@ -27,15 +27,29 @@ object Transcriber {
         frames: List<PitchFrame>,
         settings: TranscriptionSettings,
         tuningOffset: Double = 0.0,
-    ): List<Measure> {
+    ): List<Measure> = run(frames, settings) { tuningOffset }.measures
+
+    /** Seperti [transcribe] tetapi dengan koreksi tala per frame ([tuning], boleh null) dan hasil lengkap. */
+    fun transcribeFull(
+        frames: List<PitchFrame>,
+        settings: TranscriptionSettings,
+        tuning: DoubleArray?,
+    ): Transcription = run(frames, settings) { i -> tuning?.getOrNull(i) ?: 0.0 }
+
+    private fun run(
+        frames: List<PitchFrame>,
+        settings: TranscriptionSettings,
+        offsetAt: (Int) -> Double,
+    ): Transcription {
+        val empty = Transcription(emptyList(), settings.bpm, settings.key)
         val n = frames.size
         val hop = hopSeconds(frames)
         val minFrames = maxOf(3, ceil(MIN_NOTE_SEC / hop - 1e-9).toInt())
         val medianRadius = maxOf(2, (MEDIAN_SEC / hop).roundToInt())
-        if (n < minFrames) return emptyList()
+        if (n < minFrames) return empty
 
         val raw = DoubleArray(n) { i ->
-            frames[i].freqHz?.let { Pitch.freqToMidi(it) - tuningOffset } ?: Double.NaN
+            frames[i].freqHz?.let { Pitch.freqToMidi(it) - offsetAt(i) } ?: Double.NaN
         }
         val rms = DoubleArray(n) { frames[it].rms }
         fillDropouts(raw, rms, maxOf(2, ceil(MAX_DROPOUT_SEC / hop - 1e-9).toInt()))
@@ -51,11 +65,15 @@ object Transcriber {
             for (s in segmentRun(med, i, j, minFrames, hop)) segs += splitByEnergy(rms, s, minFrames)
             i = j
         }
-        if (segs.isEmpty()) return emptyList()
+        if (segs.isEmpty()) return empty
 
         // garis waktu: not dan rehat (rehat = celah di antara dua not)
         val t0 = frames[segs.first().start].timeSec - hop / 2
-        val unitsPerSec = settings.bpm / 60.0 * 4.0
+        val onsets = segs.map { frames[it.start].timeSec - hop / 2 }
+        val bpm = if (settings.autoTempo) estimateBpm(onsets) ?: settings.bpm else settings.bpm
+        val key = KeyFinder.detect(segs.map { it.midi to (frames[it.end - 1].timeSec - frames[it.start].timeSec + hop) })
+            ?: settings.key
+        val unitsPerSec = bpm / 60.0 * 4.0
         val timeline = ArrayList<Pair<Int?, Double>>() // (midi atau null=rehat, waktu akhir)
         for ((idx, s) in segs.withIndex()) {
             val st = frames[s.start].timeSec - hop / 2
@@ -80,7 +98,30 @@ object Transcriber {
             cursor = endU
         }
 
-        return buildMeasures(quantized, settings.beatsPerBar * 4)
+        return Transcription(buildMeasures(quantized, settings.beatsPerBar * 4), bpm, key)
+    }
+
+    /**
+     * Tempo dari jarak antar-awal-not: pilih bpm yang membuat jarak itu paling dekat ke kelipatan
+     * 1/2 ketuk, dengan sedikit condong ke ~90 bpm agar tidak memilih tempo dua kali lipat/setengah.
+     */
+    private fun estimateBpm(onsets: List<Double>): Int? {
+        if (onsets.size < 4) return null
+        val iois = onsets.zipWithNext { a, b -> b - a }.filter { it > 0.08 }
+        if (iois.size < 3) return null
+        var best = 0
+        var bestScore = Double.MAX_VALUE
+        for (bpm in 50..150) {
+            val beat = 60.0 / bpm
+            var err = 0.0
+            for (d in iois) {
+                val r = d / beat * 2
+                err += abs(r - maxOf(1.0, Math.rint(r)))
+            }
+            val score = err / iois.size + 0.12 * abs(Math.log(bpm / 90.0) / Math.log(2.0))
+            if (score < bestScore) { bestScore = score; best = bpm }
+        }
+        return best
     }
 
     private fun hopSeconds(frames: List<PitchFrame>): Double =

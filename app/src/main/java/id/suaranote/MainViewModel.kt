@@ -8,6 +8,8 @@ import id.suaranote.core.AnalysisResult
 import id.suaranote.core.AudioAnalyzer
 import id.suaranote.core.Dsp
 import id.suaranote.core.Measure
+import id.suaranote.core.MusicKey
+import id.suaranote.core.Transcription
 import id.suaranote.core.Synth
 import id.suaranote.core.Transcriber
 import id.suaranote.core.TranscriptionSettings
@@ -31,7 +33,10 @@ data class UiState(
     val elapsedSec: Double = 0.0,
     val level: Float = 0f,
     val processing: Boolean = false,
-    val settings: TranscriptionSettings = TranscriptionSettings(),
+    val settings: TranscriptionSettings = TranscriptionSettings(autoKey = true, autoTempo = true),
+    /** Nada dasar dan tempo yang benar-benar dipakai (hasil deteksi bila otomatis). */
+    val effKey: MusicKey = MusicKey.C,
+    val effBpm: Int = 80,
     val measures: List<Measure> = emptyList(),
     val hasRecording: Boolean = false,
     val playing: PlayWhat? = null,
@@ -41,7 +46,9 @@ data class UiState(
     val contour: FloatArray = FloatArray(0),
     val contourHopSec: Float = 0.0116f,
     val error: String? = null,
-)
+) {
+    val shown: TranscriptionSettings get() = settings.copy(key = effKey, bpm = effBpm)
+}
 
 /**
  * Alur: rekam utuh (tanpa notasi) -> berhenti -> bersihkan derau -> analisis nada -> tulis notasi.
@@ -123,16 +130,12 @@ class MainViewModel : ViewModel() {
         _state.update { it.copy(processing = true, hasRecording = true, error = null) }
         analyzeJob = viewModelScope.launch {
             try {
-                val (res, measures) = withContext(Dispatchers.Default) {
+                val (res, tr) = withContext(Dispatchers.Default) {
                     val r = AudioAnalyzer.analyze(snapshot, AudioCapture.SAMPLE_RATE, settings.denoise)
-                    r to Transcriber.transcribe(r.frames, settings, r.effectiveOffset(settings.autoTune))
+                    r to Transcriber.transcribeFull(r.frames, settings, r.effectiveTrack(settings.autoTune))
                 }
                 analysis = res
-                val off = res.effectiveOffset(settings.autoTune)
-                val contour = FloatArray(res.frames.size) { i ->
-                    res.frames[i].freqHz?.let { (id.suaranote.core.Pitch.freqToMidi(it) - off).toFloat() } ?: Float.NaN
-                }
-                _state.update { it.copy(measures = measures, processing = false, tuningCents = cents(res), contour = contour) }
+                publish(res, tr, settings, processing = false)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -146,14 +149,24 @@ class MainViewModel : ViewModel() {
         analyzeJob?.cancel()
         val settings = _state.value.settings
         analyzeJob = viewModelScope.launch {
-            val measures = withContext(Dispatchers.Default) {
-                Transcriber.transcribe(res.frames, settings, res.effectiveOffset(settings.autoTune))
+            val tr = withContext(Dispatchers.Default) {
+                Transcriber.transcribeFull(res.frames, settings, res.effectiveTrack(settings.autoTune))
             }
-            val off = res.effectiveOffset(settings.autoTune)
-            val contour = FloatArray(res.frames.size) { i ->
-                res.frames[i].freqHz?.let { (id.suaranote.core.Pitch.freqToMidi(it) - off).toFloat() } ?: Float.NaN
-            }
-            _state.update { it.copy(measures = measures, contour = contour) }
+            publish(res, tr, settings, processing = false)
+        }
+    }
+
+    private fun publish(res: AnalysisResult, tr: Transcription, settings: TranscriptionSettings, processing: Boolean) {
+        val track = res.effectiveTrack(settings.autoTune)
+        val contour = FloatArray(res.frames.size) { i ->
+            res.frames[i].freqHz?.let { (id.suaranote.core.Pitch.freqToMidi(it) - track[i]).toFloat() } ?: Float.NaN
+        }
+        _state.update {
+            it.copy(
+                measures = tr.measures, processing = processing, tuningCents = cents(res), contour = contour,
+                effKey = if (settings.autoKey) tr.key else settings.key,
+                effBpm = tr.bpm,
+            )
         }
     }
 
@@ -175,7 +188,7 @@ class MainViewModel : ViewModel() {
                     }
                     PlayWhat.RESULT -> {
                         val off = analysis?.effectiveOffset(s.settings.autoTune) ?: 0.0
-                        val data = withContext(Dispatchers.Default) { Synth.render(s.measures, s.settings.bpm, off) }
+                        val data = withContext(Dispatchers.Default) { Synth.render(s.measures, s.effBpm, off) }
                         AudioPlayer.play(data, Synth.RATE)
                     }
                 }

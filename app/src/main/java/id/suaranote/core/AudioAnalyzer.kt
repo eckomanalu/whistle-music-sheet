@@ -17,7 +17,12 @@ class AnalysisResult(
     val frames: List<PitchFrame>,
     val tuningOffset: Double,
     val tuningStrength: Double,
+    /** Koreksi tala per frame (setengah nada): mengikuti nyanyian yang pelan-pelan makin flat/sharp. */
+    val tuningTrack: DoubleArray = DoubleArray(0),
 ) {
+    fun effectiveTrack(autoTune: Boolean): DoubleArray =
+        if (autoTune && tuningTrack.size == frames.size) tuningTrack else DoubleArray(frames.size)
+
     /** Offset yang dipakai transkripsi: hanya bila kalibrasi aktif dan pergeseran cukup konsisten. */
     fun effectiveOffset(autoTune: Boolean): Double =
         if (autoTune && tuningStrength >= 0.4) tuningOffset else 0.0
@@ -36,7 +41,46 @@ object AudioAnalyzer {
         Dsp.peakNormalize(y)
         val frames = PyinAnalyzer(ANALYSIS_RATE).analyze(y)
         val (offset, strength) = estimateTuning(frames)
-        return AnalysisResult(y, frames, offset, strength)
+        return AnalysisResult(y, frames, offset, strength, estimateTrack(frames, offset, strength))
+    }
+
+    /**
+     * Seperti [estimateTuning] tetapi dalam jendela +-1,5 detik, sehingga pergeseran tala yang pelan-pelan
+     * berubah (penyanyi tanpa iringan sering makin flat) ikut terkoreksi. Hasil dibuat kontinu (tanpa lompatan
+     * satu setengah nada) agar nada yang ditahan tidak terbelah.
+     */
+    fun estimateTrack(frames: List<PitchFrame>, globalOffset: Double, globalStrength: Double): DoubleArray {
+        val n = frames.size
+        val cs = DoubleArray(n + 1)
+        val sn = DoubleArray(n + 1)
+        val ct = IntArray(n + 1)
+        for (i in 0 until n) {
+            cs[i + 1] = cs[i]; sn[i + 1] = sn[i]; ct[i + 1] = ct[i]
+            val hz = frames[i].freqHz ?: continue
+            val m = Pitch.freqToMidi(hz)
+            val a = 2 * PI * (m - floor(m))
+            cs[i + 1] += cos(a); sn[i + 1] += sin(a); ct[i + 1]++
+        }
+        val hop = if (n > 1) (frames.last().timeSec - frames.first().timeSec) / (n - 1) else 0.0116
+        val w = (1.5 / hop).toInt()
+        val out = DoubleArray(n)
+        var prev = if (globalStrength >= 0.4) globalOffset else 0.0
+        for (i in 0 until n) {
+            val lo = maxOf(0, i - w)
+            val hi = minOf(n, i + w + 1)
+            val cnt = ct[hi] - ct[lo]
+            if (cnt >= 25) {
+                val mc = (cs[hi] - cs[lo]) / cnt
+                val ms = (sn[hi] - sn[lo]) / cnt
+                if (hypot(mc, ms) >= 0.4) {
+                    var o = atan2(ms, mc) / (2 * PI)
+                    o += Math.rint(prev - o)
+                    prev = o
+                }
+            }
+            out[i] = prev
+        }
+        return out
     }
 
     /**

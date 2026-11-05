@@ -129,23 +129,45 @@ fun MainScreen(vm: MainViewModel = viewModel()) {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun SettingsCard(state: UiState, vm: MainViewModel) {
-    val s = state.settings
+    val s = state.shown
+    val u = state.settings
     Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("Nada dasar (1 = ${s.key.label})", fontWeight = FontWeight.Medium)
+            Text(
+                "Nada dasar (1 = ${s.key.label})" + if (u.autoKey && state.hasRecording) " · terdeteksi" else "",
+                fontWeight = FontWeight.Medium,
+            )
             Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                FilterChip(
+                    selected = u.autoKey,
+                    onClick = { vm.updateSettings { it.copy(autoKey = true) } },
+                    label = { Text("Otomatis") },
+                )
                 for (k in MusicKey.values()) {
                     FilterChip(
-                        selected = s.key == k,
-                        onClick = { vm.updateSettings { it.copy(key = k) } },
+                        selected = !u.autoKey && u.key == k,
+                        onClick = { vm.updateSettings { it.copy(autoKey = false, key = k) } },
                         label = { Text(k.label) },
                     )
                 }
             }
 
-            Stepper("Tempo: ${s.bpm} ketuk/menit",
-                onMinus = { vm.updateSettings { it.copy(bpm = (it.bpm - 5).coerceAtLeast(40)) } },
-                onPlus = { vm.updateSettings { it.copy(bpm = (it.bpm + 5).coerceAtMost(200)) } })
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween) {
+                Text(
+                    "Tempo otomatis" + if (u.autoTempo && state.hasRecording) " (${state.effBpm} ketuk/menit)" else "",
+                    fontWeight = FontWeight.Medium,
+                )
+                Switch(
+                    checked = u.autoTempo,
+                    onCheckedChange = { v -> vm.updateSettings { it.copy(autoTempo = v, bpm = if (v) it.bpm else state.effBpm) } },
+                )
+            }
+            if (!u.autoTempo) {
+                Stepper("Tempo: ${u.bpm} ketuk/menit",
+                    onMinus = { vm.updateSettings { it.copy(bpm = (it.bpm - 5).coerceAtLeast(40)) } },
+                    onPlus = { vm.updateSettings { it.copy(bpm = (it.bpm + 5).coerceAtMost(200)) } })
+            }
 
             Text("Birama", fontWeight = FontWeight.Medium)
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -258,7 +280,7 @@ private fun PlayCard(state: UiState, vm: MainViewModel) {
 
 @Composable
 private fun NumberedCard(state: UiState) {
-    val s = state.settings
+    val s = state.shown
     val clipboard = LocalClipboardManager.current
     Card(colors = CardDefaults.cardColors(containerColor = Color.White)) {
         Column(Modifier.padding(12.dp)) {
@@ -284,7 +306,7 @@ private fun NumberedCard(state: UiState) {
 
 @Composable
 private fun StaffCard(state: UiState) {
-    val s = state.settings
+    val s = state.shown
     Card(colors = CardDefaults.cardColors(containerColor = Color.White)) {
         Column(Modifier.padding(12.dp)) {
             Text("Not balok", fontWeight = FontWeight.Bold, color = Ink)
@@ -304,7 +326,7 @@ private fun StaffCard(state: UiState) {
 /** Titik = nada terukur tiap frame; garis = nada tepat. Titik yang jauh dari garis = nyanyian/deteksi meleset. */
 @Composable
 private fun ContourCard(state: UiState) {
-    val key = state.settings.key
+    val key = state.effKey
     val c = state.contour
     var lo = Float.MAX_VALUE
     var hi = -Float.MAX_VALUE

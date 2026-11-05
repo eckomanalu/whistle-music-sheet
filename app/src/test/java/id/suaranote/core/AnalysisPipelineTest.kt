@@ -33,6 +33,7 @@ class AnalysisPipelineTest {
         scoop: Double = 0.0,           // semitone di bawah nada target pada awal nada
         vib: Double = 0.008,
         breath: Double = 0.0,
+        drift: Double = 0.0,           // sen pada akhir rekaman (negatif = makin flat)
     ): ShortArray {
         val lead = (0.4 * sr).toInt()
         val total = lead + tones.sumOf { (it.sec * sr).toInt() } + (0.4 * sr).toInt()
@@ -47,7 +48,7 @@ class AnalysisPipelineTest {
                 for (i in 0 until len) {
                     val time = (pos + i).toDouble() / sr
                     val sc = if (scoop != 0.0) 2.0.pow(-scoop * maxOf(0.0, 1 - i / (0.12 * sr)) / 12.0) else 1.0
-                    val f = t.freq * shift * sc * (1 + vib * sin(2 * PI * 5.5 * time)) // vibrato
+                    val f = t.freq * shift * sc * 2.0.pow(drift * time / (total.toDouble() / sr) / 1200.0) * (1 + vib * sin(2 * PI * 5.5 * time)) // vibrato
                     phase += 2 * PI * f / sr
                     val s = if (partials != null) partials.withIndex().sumOf { (h, a) -> a * sin((h + 1) * phase) }
                     else if (whistle) sin(phase) + 0.03 * sin(2 * phase)
@@ -168,5 +169,32 @@ class AnalysisPipelineTest {
     fun quietHumInLoudNoise() {
         val pcm = record(melody(intArrayOf(48, 48, 55, 55, 57, 57, 55)), whistle = false, noise = 0.06, mains = 0.05)
         assertEquals("1 = C\n| 1, 1, 5, 5, | 6, 6, 5, - |", transcribe(pcm))
+    }
+
+    @Test
+    fun fullTwinkleAutoKeyAutoTempoWithFlatDrift() {
+        val bpm = 100
+        val b = 60.0 / bpm
+        val midis = intArrayOf(56, 56, 63, 63, 65, 65, 63, 61, 61, 60, 60, 58, 58, 56)
+        val gap = 0.05
+        val tones = ArrayList<Tone>()
+        for ((i, m) in midis.withIndex()) {
+            val beats = if (i == 6 || i == 13) 2.0 else 1.0
+            tones += Tone(midiHz(m), beats * b - gap)
+            tones += Tone(0.0, gap)
+        }
+        val pcm = record(tones, whistle = false, cents = 20.0, drift = -110.0, partials = doubleArrayOf(0.5, 1.0, 0.6, 0.3))
+        val res = AudioAnalyzer.analyze(pcm, sr, true)
+        val settings = TranscriptionSettings(autoKey = true, autoTempo = true)
+        val tr = Transcriber.transcribeFull(res.frames, settings, res.effectiveTrack(true))
+        assertEquals(MusicKey.AFlat, tr.key)
+        assertTrue("bpm ${tr.bpm}", Math.abs(tr.bpm - bpm) <= 6)
+        // bandingkan nada saja (urutan midi) agar tidak bergantung pada pembagian birama
+        val got = tr.measures.flatMap { it.events }.filter { it.midi != null }.map { it.midi }
+        assertEquals(midis.toList(), got)
+        // tanpa koreksi tala yang mengikuti pergeseran, nada belakang akan salah setengah nada
+        val plain = Transcriber.transcribeFull(res.frames, settings, null).measures
+            .flatMap { it.events }.filter { it.midi != null }.map { it.midi }
+        assertTrue("tanpa kalibrasi seharusnya meleset", plain != midis.toList())
     }
 }
