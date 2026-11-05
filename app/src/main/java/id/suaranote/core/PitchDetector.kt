@@ -5,9 +5,7 @@ import kotlin.math.sqrt
 data class PitchResult(val freqHz: Double, val clarity: Double)
 
 /**
- * Pendeteksi nada monofonik (satu nada pada satu waktu) dengan algoritma YIN
- * (de Cheveigné & Kawahara, 2002). Cocok untuk suara nyanyian, siulan, atau seruling.
- *
+ * Pendeteksi nada monofonik dengan algoritma YIN (de Cheveigne & Kawahara, 2002).
  * Satu instance tidak thread-safe (memakai buffer kerja internal).
  */
 class PitchDetector(
@@ -20,35 +18,44 @@ class PitchDetector(
     private val tauMin = maxOf(2, (sampleRate / maxFreqHz).toInt())
     private val tauMax = (sampleRate / minFreqHz).toInt()
 
-    /** Jumlah sampel minimum yang harus ada di buffer yang diberikan ke [detect]. */
+    /** Jumlah sampel minimum yang dibutuhkan mulai dari posisi awal jendela. */
     val requiredSamples: Int = windowSize + tauMax
+
+    /** Rentang lag yang dicari (dalam sampel). */
+    val minLag: Int get() = tauMin
+    val maxLag: Int get() = tauMax
 
     private val diff = DoubleArray(tauMax + 2)
     private val cmnd = DoubleArray(tauMax + 2)
 
-    /** Mengembalikan frekuensi dasar, atau null bila sinyal tidak cukup periodik. */
-    fun detect(buf: FloatArray): PitchResult? {
-        require(buf.size >= requiredSamples) { "Buffer terlalu pendek" }
+    /** Hasil terakhir [computeCmnd]: indeks 0..[maxLag]. Jangan diubah oleh pemanggil. */
+    val cmndArray: DoubleArray get() = cmnd
 
-        // 1) fungsi selisih
+    /** Hitung cumulative-mean-normalized difference untuk jendela yang diawali [start]. */
+    fun computeCmnd(buf: FloatArray, start: Int = 0) {
+        require(buf.size >= start + requiredSamples) { "Buffer terlalu pendek" }
         for (tau in 1..tauMax) {
             var sum = 0.0
+            val a = start
+            val b = start + tau
             for (j in 0 until windowSize) {
-                val d = (buf[j] - buf[j + tau]).toDouble()
+                val d = (buf[a + j] - buf[b + j]).toDouble()
                 sum += d * d
             }
             diff[tau] = sum
         }
-
-        // 2) cumulative mean normalized difference
         cmnd[0] = 1.0
         var running = 0.0
         for (tau in 1..tauMax) {
             running += diff[tau]
             cmnd[tau] = if (running == 0.0) 1.0 else diff[tau] * tau / running
         }
+    }
 
-        // 3) ambang absolut: lembah pertama di bawah threshold
+    /** Mengembalikan frekuensi dasar, atau null bila sinyal tidak cukup periodik. */
+    fun detect(buf: FloatArray): PitchResult? {
+        computeCmnd(buf, 0)
+
         var tauEst = -1
         var tau = tauMin
         while (tau <= tauMax) {
@@ -65,7 +72,6 @@ class PitchDetector(
             if (cmnd[best] < FALLBACK_LIMIT) tauEst = best else return null
         }
 
-        // 4) interpolasi parabola
         var refined = tauEst.toDouble()
         if (tauEst > 1 && tauEst < tauMax) {
             val s0 = cmnd[tauEst - 1]
@@ -77,11 +83,7 @@ class PitchDetector(
         return PitchResult(sampleRate / refined, 1.0 - cmnd[tauEst])
     }
 
-    /**
-     * Analisis satu jendela audio: gerbang keheningan (RMS) lalu deteksi nada.
-     * RMS dihitung dari [ENERGY_SAMPLES] sampel terbaru (blok ~23 ms yang tidak tumpang-tindih
-     * antar frame) agar lembah energi di antara dua not tetap terlihat.
-     */
+    /** Analisis satu jendela audio: gerbang keheningan (RMS) lalu deteksi nada. */
     fun analyze(buf: FloatArray, timeSec: Double, silenceRms: Double = DEFAULT_SILENCE_RMS): PitchFrame {
         var energy = 0.0
         val from = requiredSamples - ENERGY_SAMPLES

@@ -1,6 +1,7 @@
 package id.suaranote.core
 
 import kotlin.math.abs
+import kotlin.math.ceil
 import kotlin.math.roundToInt
 
 /**
@@ -9,23 +10,36 @@ import kotlin.math.roundToInt
  * Tahapan: buang bunyi sangat pendek -> median filter (hilangkan lonjakan oktaf) ->
  * segmentasi nada dengan histeresis -> pisah not berulang lewat lembah energi ->
  * kuantisasi ke grid 1/16 menurut tempo -> potong di garis birama dengan ikatan.
+ * Semua ambang durasi dinyatakan dalam detik sehingga tidak bergantung pada jarak antar-frame.
  */
 object Transcriber {
-    private const val MIN_NOTE_FRAMES = 3
+    private const val MIN_NOTE_SEC = 0.06
+    private const val MEDIAN_SEC = 0.04
+    private const val MAX_DROPOUT_SEC = 0.03
     private const val SWITCH_TOLERANCE = 0.65 // setengah nada
     private val PARTS = intArrayOf(16, 12, 8, 6, 4, 3, 2, 1)
 
     private class Seg(var midi: Int, var start: Int, var end: Int) // end eksklusif
 
-    fun transcribe(frames: List<PitchFrame>, settings: TranscriptionSettings): List<Measure> {
+    /** [tuningOffset] (setengah nada) dikurangkan dari nada terukur sebelum dibulatkan. */
+    fun transcribe(
+        frames: List<PitchFrame>,
+        settings: TranscriptionSettings,
+        tuningOffset: Double = 0.0,
+    ): List<Measure> {
         val n = frames.size
-        if (n < MIN_NOTE_FRAMES) return emptyList()
         val hop = hopSeconds(frames)
+        val minFrames = maxOf(3, ceil(MIN_NOTE_SEC / hop - 1e-9).toInt())
+        val medianRadius = maxOf(2, (MEDIAN_SEC / hop).roundToInt())
+        if (n < minFrames) return emptyList()
 
-        val raw = DoubleArray(n) { i -> frames[i].freqHz?.let { Pitch.freqToMidi(it) } ?: Double.NaN }
-        dropShortRuns(raw)
-        val med = medianFilter(raw, 2)
+        val raw = DoubleArray(n) { i ->
+            frames[i].freqHz?.let { Pitch.freqToMidi(it) - tuningOffset } ?: Double.NaN
+        }
         val rms = DoubleArray(n) { frames[it].rms }
+        fillDropouts(raw, rms, maxOf(2, ceil(MAX_DROPOUT_SEC / hop - 1e-9).toInt()))
+        dropShortRuns(raw, minFrames)
+        val med = medianFilter(raw, medianRadius)
 
         val segs = ArrayList<Seg>()
         var i = 0
@@ -33,7 +47,7 @@ object Transcriber {
             if (med[i].isNaN()) { i++; continue }
             var j = i
             while (j < n && !med[j].isNaN()) j++
-            for (s in segmentRun(med, i, j)) segs += splitByEnergy(rms, s)
+            for (s in segmentRun(med, i, j, minFrames)) segs += splitByEnergy(rms, s, minFrames)
             i = j
         }
         if (segs.isEmpty()) return emptyList()
@@ -71,14 +85,37 @@ object Transcriber {
     private fun hopSeconds(frames: List<PitchFrame>): Double =
         if (frames.size > 1) (frames.last().timeSec - frames.first().timeSec) / (frames.size - 1) else 0.023
 
-    /** Bunyi bersuara yang lebih pendek dari MIN_NOTE_FRAMES dianggap derau. */
-    private fun dropShortRuns(x: DoubleArray) {
+    /**
+     * Lubang pendek tanpa nada di tengah bunyi yang sama (pelacak sempat gagal, tetapi energi tidak turun)
+     * ditambal dengan interpolasi. Jeda artikulasi sungguhan ditandai penurunan energi, jadi tidak ditambal.
+     */
+    private fun fillDropouts(x: DoubleArray, rms: DoubleArray, maxGap: Int) {
+        var i = 0
+        while (i < x.size) {
+            if (!x[i].isNaN()) { i++; continue }
+            var j = i
+            while (j < x.size && x[j].isNaN()) j++
+            val len = j - i
+            if (i > 0 && j < x.size && len <= maxGap) {
+                val a = x[i - 1]
+                val b = x[j]
+                val ref = minOf(rms[i - 1], rms[j])
+                var ok = abs(a - b) < 0.7
+                for (k in i until j) if (rms[k] < 0.6 * ref) ok = false
+                if (ok) for (k in i until j) x[k] = a + (b - a) * (k - i + 1) / (len + 1)
+            }
+            i = j
+        }
+    }
+
+    /** Bunyi bersuara yang lebih pendek dari [minFrames] dianggap derau. */
+    private fun dropShortRuns(x: DoubleArray, minFrames: Int) {
         var i = 0
         while (i < x.size) {
             if (x[i].isNaN()) { i++; continue }
             var j = i
             while (j < x.size && !x[j].isNaN()) j++
-            if (j - i < MIN_NOTE_FRAMES) for (k in i until j) x[k] = Double.NaN
+            if (j - i < minFrames) for (k in i until j) x[k] = Double.NaN
             i = j
         }
     }
@@ -104,7 +141,7 @@ object Transcriber {
     }
 
     /** Segmentasi satu rentang bersuara menjadi not-not bernada tetap. */
-    private fun segmentRun(med: DoubleArray, start: Int, end: Int): List<Seg> {
+    private fun segmentRun(med: DoubleArray, start: Int, end: Int, minFrames: Int): List<Seg> {
         val segs = ArrayList<Seg>()
         var cur = med[start].roundToInt()
         var segStart = start
@@ -114,7 +151,7 @@ object Transcriber {
                 val cand = med[k].roundToInt()
                 var m = k
                 while (m < end && abs(med[m] - cand) <= SWITCH_TOLERANCE) m++
-                if (cand != cur && m - k >= MIN_NOTE_FRAMES) {
+                if (cand != cur && m - k >= minFrames) {
                     segs += Seg(cur, segStart, k)
                     cur = cand
                     segStart = k
@@ -130,7 +167,7 @@ object Transcriber {
         var idx = 0
         while (idx < segs.size) {
             val s = segs[idx]
-            if (s.end - s.start < MIN_NOTE_FRAMES && segs.size > 1) {
+            if (s.end - s.start < minFrames && segs.size > 1) {
                 if (idx + 1 < segs.size) segs[idx + 1].start = s.start else segs[idx - 1].end = s.end
                 segs.removeAt(idx)
             } else {
@@ -149,7 +186,7 @@ object Transcriber {
     }
 
     /** Not berulang pada nada yang sama dipisah di lembah energi (mis. "la-la-la" tanpa jeda). */
-    private fun splitByEnergy(rms: DoubleArray, seg: Seg): List<Seg> {
+    private fun splitByEnergy(rms: DoubleArray, seg: Seg, minFrames: Int): List<Seg> {
         val out = ArrayList<Seg>()
         var from = seg.start
         var peak = rms[seg.start]
@@ -164,7 +201,7 @@ object Transcriber {
                 if (r < valley) {
                     valley = r; valleyIdx = k
                 } else if (r > valley * 1.6) {
-                    if (valleyIdx - from >= MIN_NOTE_FRAMES && seg.end - valleyIdx >= MIN_NOTE_FRAMES) {
+                    if (valleyIdx - from >= minFrames && seg.end - valleyIdx >= minFrames) {
                         out += Seg(seg.midi, from, valleyIdx)
                         from = valleyIdx
                     }

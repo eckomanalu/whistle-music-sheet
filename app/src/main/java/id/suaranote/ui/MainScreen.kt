@@ -25,6 +25,9 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Switch
+import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -46,12 +49,12 @@ import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import id.suaranote.MainViewModel
+import id.suaranote.PlayWhat
 import id.suaranote.UiState
 import id.suaranote.core.MusicKey
 import id.suaranote.core.NotationText
 import id.suaranote.render.NumberedRenderer
 import id.suaranote.render.StaffRenderer
-import kotlin.math.abs
 
 private val Ink = Color(0xFF1B1B1F)
 private val RecordRed = Color(0xFFC62828)
@@ -90,16 +93,17 @@ fun MainScreen(vm: MainViewModel = viewModel()) {
     ) {
         Text("SuaraNote", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
         Text(
-            "Nyanyikan atau siulkan satu nada pada satu waktu, lalu tekan Berhenti untuk melihat not balok dan not angka.",
+            "Siulkan atau dengungkan satu bagian lagu (satu nada pada satu waktu), lalu tekan Berhenti. Rekaman dibersihkan dan dianalisis utuh, baru notasinya ditulis.",
             style = MaterialTheme.typography.bodyMedium,
         )
 
         SettingsCard(state, vm)
-        LiveCard(state)
+        RecordCard(state)
 
         Button(
             onClick = { toggleRecording() },
             modifier = Modifier.fillMaxWidth().height(56.dp),
+            enabled = !state.processing,
             colors = ButtonDefaults.buttonColors(containerColor = if (state.recording) Ink else RecordRed),
         ) {
             Text(if (state.recording) "Berhenti" else if (state.hasRecording) "Rekam ulang" else "Rekam", fontSize = 18.sp)
@@ -107,9 +111,11 @@ fun MainScreen(vm: MainViewModel = viewModel()) {
 
         state.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
 
-        if (state.hasRecording) {
+        if (state.hasRecording && !state.processing) PlayCard(state, vm)
+
+        if (state.hasRecording && !state.processing) {
             if (state.measures.isEmpty()) {
-                Text("Tidak ada nada yang terdeteksi. Coba lebih dekat ke mikrofon, di tempat yang tenang.")
+                Text("Tidak ada nada yang terdeteksi. Coba lebih dekat ke mikrofon (sekitar 10–20 cm), di tempat yang tenang, dengan nada yang ditahan jelas.")
             } else {
                 NumberedCard(state)
                 StaffCard(state)
@@ -155,6 +161,20 @@ private fun SettingsCard(state: UiState, vm: MainViewModel) {
                 onMinus = { vm.updateSettings { it.copy(octaveOffset = (it.octaveOffset - 1).coerceAtLeast(-2)) } },
                 onPlus = { vm.updateSettings { it.copy(octaveOffset = (it.octaveOffset + 1).coerceAtMost(2)) } },
             )
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween) {
+                Text("Pembersih derau", fontWeight = FontWeight.Medium)
+                Switch(checked = s.denoise, onCheckedChange = { v -> vm.updateSettings { it.copy(denoise = v) } })
+            }
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween) {
+                Column(Modifier.weight(1f)) {
+                    Text("Kalibrasi nada otomatis", fontWeight = FontWeight.Medium)
+                    Text("Bila Anda konsisten sedikit sharp/flat, nada digeser ke tala standar.",
+                        style = MaterialTheme.typography.bodySmall)
+                }
+                Switch(checked = s.autoTune, onCheckedChange = { v -> vm.updateSettings { it.copy(autoTune = v) } })
+            }
             if (state.hasRecording) {
                 Text(
                     "Tempo, birama, nada dasar, dan oktaf bisa diubah setelah merekam; notasi langsung dihitung ulang.",
@@ -178,26 +198,58 @@ private fun Stepper(label: String, onMinus: () -> Unit, onPlus: () -> Unit) {
 }
 
 @Composable
-private fun LiveCard(state: UiState) {
+private fun RecordCard(state: UiState) {
     Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)) {
-        Column(Modifier.fillMaxWidth().padding(12.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-            if (state.recording) {
-                val live = state.live
-                val m = (state.elapsedSec / 60).toInt()
-                val sec = (state.elapsedSec % 60).toInt()
-                Text("Merekam  %d:%02d".format(m, sec), style = MaterialTheme.typography.labelLarge, color = RecordRed)
-                if (live == null) {
-                    Text("—", fontSize = 36.sp)
-                    Text("Belum ada nada")
-                } else {
-                    Text("${live.name}   ${live.numbered}", fontSize = 36.sp, fontWeight = FontWeight.Bold)
-                    val c = live.cents
-                    Text(if (abs(c) <= 15) "pas" else if (c > 0) "+$c sen (agak tinggi)" else "$c sen (agak rendah)")
+        Column(Modifier.fillMaxWidth().padding(12.dp), horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            when {
+                state.recording -> {
+                    val m = (state.elapsedSec / 60).toInt()
+                    val sec = (state.elapsedSec % 60).toInt()
+                    Text("Merekam  %d:%02d".format(m, sec), style = MaterialTheme.typography.titleMedium, color = RecordRed)
+                    LinearProgressIndicator(progress = { state.level.coerceIn(0f, 1f) }, modifier = Modifier.fillMaxWidth())
+                    Text("Notasi ditulis setelah Anda menekan Berhenti.", style = MaterialTheme.typography.bodySmall)
                 }
-            } else {
-                Text("Siap merekam", fontWeight = FontWeight.Medium)
-                Text("Nada yang terdengar akan tampil di sini secara langsung.", style = MaterialTheme.typography.bodySmall)
+                state.processing -> {
+                    CircularProgressIndicator()
+                    Text("Membersihkan derau dan menganalisis nada…")
+                }
+                else -> {
+                    Text("Siap merekam", fontWeight = FontWeight.Medium)
+                    state.tuningCents?.let {
+                        if (it != 0) Text(
+                            "Rata-rata nada Anda ${if (it > 0) "+$it" else "$it"} sen dari tala standar.",
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    }
+                }
             }
+        }
+    }
+}
+
+@Composable
+private fun PlayCard(state: UiState, vm: MainViewModel) {
+    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("Dengarkan & bandingkan", fontWeight = FontWeight.Medium)
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                for ((what, label) in listOf(PlayWhat.ORIGINAL to "Asli", PlayWhat.CLEAN to "Bersih", PlayWhat.RESULT to "Hasil")) {
+                    val on = state.playing == what
+                    val enabled = what != PlayWhat.RESULT || state.measures.isNotEmpty()
+                    OutlinedButton(
+                        onClick = { vm.togglePlay(what) },
+                        enabled = enabled,
+                        modifier = Modifier.weight(1f),
+                        contentPadding = PaddingValues(horizontal = 4.dp),
+                    ) { Text(if (on) "■ $label" else "▶ $label") }
+                }
+            }
+            Text(
+                "Asli = rekaman mentah. Bersih = setelah derau dibuang. Hasil = nada yang tertulis di notasi. " +
+                    "Bandingkan Asli dengan Hasil untuk menilai ketepatan.",
+                style = MaterialTheme.typography.bodySmall,
+            )
         }
     }
 }

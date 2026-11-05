@@ -26,4 +26,8 @@ data class TranscriptionSettings(
     val beatsPerBar: Int = 4,
     /** Geser oktaf tampilan not angka (tidak memengaruhi not balok). */
     val octaveOffset: Int = 0,
+    /** Pembersih derau sebelum analisis (mengubah analisis, bukan hanya notasi). */
+    val denoise: Boolean = true,
+    /** Kalibrasi tala: koreksi pergeseran nada yang konsisten sebelum dibulatkan ke setengah nada. */
+    val autoTune: Boolean = true,
 )
