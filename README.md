@@ -5,12 +5,20 @@ Aplikasi Android (Kotlin + Jetpack Compose) untuk menyusun lagu dari **tuts pian
 ## Cara memakai
 1. Pilih **panjang nada** (dalam ketuk: 4, 3, 2, 1½, 1, ¾, ½, ¼).
 2. Tekan tuts piano (C4 sampai C6, dua oktaf). Nada berbunyi dan langsung masuk ke notasi dengan panjang terpilih.
-3. **Rehat** menambah jeda sepanjang panjang terpilih. **Hapus** selalu menghapus satu not/rehat paling akhir. **• Titik** menjadikan not terakhir bertitik (×1,5), **– Sambung** memperpanjang not terakhir sebesar panjang terpilih, **Putar** memainkan seluruh lagu.
+3. **0 Rehat** menambah jeda sepanjang panjang terpilih. **• Sambung** menambah perpanjangan (titik) sebesar panjang terpilih pada not terakhir. **Hapus** selalu menghapus satu *simbol* paling akhir: kepala not, rehat, atau satu titik perpanjangan (bukan seluruh not). **Putar** memainkan lagu; simbol yang sedang berbunyi disorot (oranye) di not angka dan not balok.
+   Sentuh sebuah not, atau ruang kosong dalam sebuah birama, untuk memilih awal pemutaran (biru); tombol berubah menjadi **Dari sini**. Sentuh lagi untuk membatalkan.
 4. **Mode live:** nyalakan chip *Mode live*, lalu tahan tuts selama durasi yang diinginkan. Not langsung muncul dan memanjang selama ditahan; saat dilepas panjangnya dibulatkan ke ketukan (pembulatan ¼, ½, atau 1 ketuk). Jeda antar-tuts yang cukup panjang menjadi rehat otomatis, kecuali chip *Legato* dinyalakan (nada selalu bersambung). Nyalakan Metronom agar ketukan stabil.
 5. Nada dasar, birama, geser oktaf not angka, dan tempo (tombol − dan +) bisa diubah kapan saja; **Metronom** membunyikan tik tiap ketuk (juga saat lagu diputar); notasi langsung dihitung ulang.
 
+## Not angka
+- Angka 1..7 dengan titik oktaf; garis **di atas** angka: 1/8 satu garis, 1/16 dua garis.
+- Perpanjangan nada digambar sebagai titik: 1 ketuk = titik, 1/2 ketuk = titik dengan satu garis di atas, 1/4 ketuk = titik dengan dua garis di atas.
+- Kres: angka dicoret garis miring `/` menempel pada angkanya; mol: dicoret `\`.
+- Rehat `0`.
+
 ## Struktur
-- `core/Composition.kt` daftar not/rehat berurutan, tambah/hapus terakhir, pembagian ke birama dan ikatan di garis birama
+- `core/Composition.kt` lagu sebagai deretan simbol (kepala not + perpanjangan), hapus per simbol, pembagian ke birama, ikatan, dan simbol not angka
+- `core/LiveTiming.kt` pembulatan waktu mode live
 - `core/Music.kt` ejaan not menurut nada dasar, not angka, teks notasi
 - `core/Synth.kt` bunyi sintetis untuk tuts dan pemutaran lagu
 - `render/` tata letak not balok dan not angka (Kotlin murni, bisa diuji tanpa Android)

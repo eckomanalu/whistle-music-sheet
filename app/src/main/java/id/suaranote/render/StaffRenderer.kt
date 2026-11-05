@@ -46,6 +46,11 @@ object StaffRenderer {
         var group: Group? = null
         var cx = 0f
         var sys = 0
+        var left = 0f
+        var right = 0f
+        var startUnit = 0
+        var opFrom = 0
+        var opTo = 0
         val isNote: Boolean get() = e.midi != null
         val stemEndStep: Int
             get() = group?.beamStep ?: if (stemUp) max(step + 7, 4) else min(step - 7, 4)
@@ -53,6 +58,9 @@ object StaffRenderer {
 
     private class Meas(val evs: List<Ev>) {
         val widthSp: Float = 2 * PAD + evs.sumOf { it.totalSp.toDouble() }.toFloat()
+        var xStart = 0f
+        var xEnd = 0f
+        var startUnit = 0
     }
 
     private class Sys(val first: Int, val last: Int) { // indeks birama, inklusif
@@ -90,6 +98,13 @@ object StaffRenderer {
             i = j
         }
 
+        // satuan waktu mutlak (1/16) tiap birama dan not
+        var unitCursor = 0
+        for (m in meas) {
+            m.startUnit = unitCursor
+            for (ev in m.evs) { ev.startUnit = unitCursor; unitCursor += ev.e.dur16 }
+        }
+
         // ---- posisi horizontal ----
         val ops = ArrayList<DrawOp>()
         val flat = ArrayList<Ev>()
@@ -106,14 +121,18 @@ object StaffRenderer {
             var x = s.contentLeft
             for (mi in s.first..s.last) {
                 val m = meas[mi]
+                m.xStart = x
                 var cum = PAD
                 for (ev in m.evs) {
+                    ev.left = x + cum * sp * f
                     ev.cx = x + (cum + ev.accSp + ev.baseSp / 2) * sp * f
                     ev.sys = si
                     cum += ev.totalSp
+                    ev.right = x + cum * sp * f
                     flat += ev
                 }
                 x += m.widthSp * sp * f
+                m.xEnd = x
                 barlineX += x
             }
 
@@ -169,7 +188,11 @@ object StaffRenderer {
             }
 
             for (mi in s.first..s.last) {
-                for (ev in meas[mi].evs) drawEvent(ev, s, ops, sp, ::y)
+                for (ev in meas[mi].evs) {
+                    ev.opFrom = ops.size
+                    drawEvent(ev, s, ops, sp, ::y)
+                    ev.opTo = ops.size
+                }
 
                 // garis birama
                 val bx = barlineX[mi]
@@ -203,7 +226,19 @@ object StaffRenderer {
             }
         }
 
-        return Rendering(width, totalHeight, ops)
+        val hits = ArrayList<Hit>()
+        val bars = ArrayList<Bar>()
+        for ((mi, m) in meas.withIndex()) {
+            val sysOfMeasure = systems.first { mi in it.first..it.last }
+            val top = y(sysOfMeasure, sysOfMeasure.topStep)
+            val bottom = y(sysOfMeasure, sysOfMeasure.bottomStep)
+            bars += Bar(mi, m.startUnit, m.xStart, top, m.xEnd, bottom)
+            for (ev in m.evs) {
+                hits += Hit(ev.startUnit, ev.startUnit + ev.e.dur16, ev.left, top, ev.right, bottom, (ev.opFrom until ev.opTo).toList())
+            }
+        }
+
+        return Rendering(width, totalHeight, ops, hits, bars)
     }
 
     // ------------------------------------------------------------------

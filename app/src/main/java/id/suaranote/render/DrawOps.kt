@@ -32,4 +32,27 @@ data class TieOp(
 /** Teks rata tengah pada [x] dengan garis dasar [baseline]. */
 data class TextOp(val text: String, val x: Float, val baseline: Float, val size: Float) : DrawOp
 
-data class Rendering(val width: Float, val height: Float, val ops: List<DrawOp>)
+/**
+ * Satu simbol yang bisa disorot/disentuh: [startUnit]..[endUnit] (1/16, mutlak sejak awal lagu), kotaknya,
+ * dan indeks operasi gambar miliknya (untuk mewarnai).
+ */
+data class Hit(
+    val startUnit: Int,
+    val endUnit: Int,
+    val left: Float,
+    val top: Float,
+    val right: Float,
+    val bottom: Float,
+    val ops: List<Int>,
+)
+
+/** Satu birama (untuk memilih awal pemutaran dari birama). */
+data class Bar(val measure: Int, val startUnit: Int, val left: Float, val top: Float, val right: Float, val bottom: Float)
+
+data class Rendering(
+    val width: Float,
+    val height: Float,
+    val ops: List<DrawOp>,
+    val hits: List<Hit> = emptyList(),
+    val bars: List<Bar> = emptyList(),
+)

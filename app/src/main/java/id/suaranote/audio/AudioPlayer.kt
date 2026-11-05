@@ -6,11 +6,13 @@ import android.media.AudioTrack
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /** Memutar PCM 16-bit mono. Pembatalan coroutine menghentikan suara seketika. */
 object AudioPlayer {
-    suspend fun play(pcm: ShortArray, sampleRate: Int) = withContext(Dispatchers.IO) {
+    /** [onProgress] menerima jumlah frame yang sudah benar-benar terputar (~tiap 30 ms). */
+    suspend fun play(pcm: ShortArray, sampleRate: Int, onProgress: ((Int) -> Unit)? = null) = withContext(Dispatchers.IO) {
         if (pcm.isEmpty()) return@withContext
         val minBuf = AudioTrack.getMinBufferSize(sampleRate, AudioFormat.CHANNEL_OUT_MONO, AudioFormat.ENCODING_PCM_16BIT)
         val track = AudioTrack.Builder()
@@ -32,6 +34,12 @@ object AudioPlayer {
             .build()
         try {
             track.play()
+            val poller = if (onProgress == null) null else launch {
+                while (isActive) {
+                    onProgress(track.playbackHeadPosition)
+                    kotlinx.coroutines.delay(30)
+                }
+            }
             var pos = 0
             while (pos < pcm.size && currentCoroutineContext().isActive) {
                 val n = track.write(pcm, pos, minOf(4096, pcm.size - pos))
@@ -43,6 +51,7 @@ object AudioPlayer {
             while (currentCoroutineContext().isActive && track.playbackHeadPosition < endFrames) {
                 kotlinx.coroutines.delay(30)
             }
+            poller?.cancel()
         } finally {
             runCatching { track.pause(); track.flush(); track.stop() }
             track.release()

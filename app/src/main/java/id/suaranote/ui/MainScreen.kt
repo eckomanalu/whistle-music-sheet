@@ -82,8 +82,12 @@ fun MainScreen(vm: MainViewModel = viewModel()) {
                     style = MaterialTheme.typography.bodyMedium,
                 )
             } else {
-                NumberedCard(state)
-                StaffCard(state)
+                Text(
+                    "Sentuh sebuah not atau ruang kosong sebuah birama untuk memilih awal pemutaran (biru). Sentuh lagi untuk membatalkan.",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                NumberedCard(state) { u, bar -> vm.selectStart(u, bar) }
+                StaffCard(state) { u, bar -> vm.selectStart(u, bar) }
             }
             state.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
         }
@@ -209,37 +213,34 @@ private fun InputPanel(state: UiState, vm: MainViewModel) {
                 modifier = Modifier.weight(1f),
             )
         }
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
             OutlinedButton(onClick = { vm.addRest() }, modifier = Modifier.weight(1f), contentPadding = PaddingValues(2.dp)) {
-                Text("0 Rehat", fontSize = 13.sp)
+                Text("0 Rehat", fontSize = 12.sp, maxLines = 1)
             }
-            OutlinedButton(
-                onClick = { vm.dotLast() },
-                enabled = state.composition.canDot(),
-                modifier = Modifier.weight(1f),
-                contentPadding = PaddingValues(2.dp),
-            ) { Text("• Titik", fontSize = 13.sp) }
             OutlinedButton(
                 onClick = { vm.extendLast() },
                 enabled = !state.isEmpty,
                 modifier = Modifier.weight(1f),
                 contentPadding = PaddingValues(2.dp),
-            ) { Text("– Sambung", fontSize = 13.sp) }
-        }
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            ) { Text("• Sambung", fontSize = 12.sp, maxLines = 1) }
             Button(
                 onClick = { vm.deleteLast() },
                 enabled = !state.isEmpty,
                 modifier = Modifier.weight(1f),
                 colors = ButtonDefaults.buttonColors(containerColor = RecordRed),
                 contentPadding = PaddingValues(2.dp),
-            ) { Text("⌫ Hapus") }
+            ) { Text("⌫ Hapus", fontSize = 12.sp, maxLines = 1) }
             OutlinedButton(
                 onClick = { vm.togglePlay() },
                 enabled = !state.isEmpty,
                 modifier = Modifier.weight(1f),
                 contentPadding = PaddingValues(2.dp),
-            ) { Text(if (state.playing) "■ Berhenti" else "▶ Putar") }
+            ) {
+                Text(
+                    if (state.playing) "■ Berhenti" else if (state.startUnit != null) "▶ Dari sini" else "▶ Putar",
+                    fontSize = 12.sp, maxLines = 1,
+                )
+            }
         }
         PianoKeyboard(onDown = { vm.keyDown(it) }, onUp = { vm.keyUp(it) })
     }
@@ -299,7 +300,7 @@ private fun Key(midi: Int, black: Boolean, onDown: (Int) -> Unit, onUp: (Int) ->
 }
 
 @Composable
-private fun NumberedCard(state: UiState) {
+private fun NumberedCard(state: UiState, onTap: (Int, Boolean) -> Unit) {
     val s = state.settings
     val clipboard = LocalClipboardManager.current
     Card(colors = CardDefaults.cardColors(containerColor = Color.White)) {
@@ -308,24 +309,24 @@ private fun NumberedCard(state: UiState) {
                 horizontalArrangement = Arrangement.SpaceBetween) {
                 Text("Not angka  ·  1 = ${s.key.label}  ·  ${s.beatsPerBar}/4", fontWeight = FontWeight.Bold, color = Ink)
                 TextButton(onClick = {
-                    clipboard.setText(AnnotatedString(NotationText.numbered(state.measures, s.key, s.octaveOffset)))
+                    clipboard.setText(AnnotatedString(NotationText.numbered(state.composition, s.key, s.beatsPerBar, s.octaveOffset)))
                 }) { Text("Salin teks") }
             }
             BoxWithConstraints(Modifier.fillMaxWidth()) {
                 val density = LocalDensity.current
                 val widthPx = with(density) { maxWidth.toPx() }
                 val fs = with(density) { 22.dp.toPx() }
-                val r = remember(state.measures, s.key, s.octaveOffset, widthPx) {
-                    NumberedRenderer.render(state.measures, s.key, s.octaveOffset, widthPx, fs)
+                val r = remember(state.tokens, s.key, s.octaveOffset, widthPx) {
+                    NumberedRenderer.render(state.tokens, s.key, s.octaveOffset, widthPx, fs)
                 }
-                RenderedCanvas(r, Ink)
+                RenderedCanvas(r, Ink, playUnit = state.playUnit, startUnit = state.startUnit, startIsBar = state.startIsBar, onTap = onTap)
             }
         }
     }
 }
 
 @Composable
-private fun StaffCard(state: UiState) {
+private fun StaffCard(state: UiState, onTap: (Int, Boolean) -> Unit) {
     val s = state.settings
     Card(colors = CardDefaults.cardColors(containerColor = Color.White)) {
         Column(Modifier.padding(12.dp)) {
@@ -337,7 +338,7 @@ private fun StaffCard(state: UiState) {
                 val r = remember(state.measures, s.key, s.beatsPerBar, widthPx) {
                     StaffRenderer.render(state.measures, s.key, s.beatsPerBar, widthPx, sp)
                 }
-                RenderedCanvas(r, Ink)
+                RenderedCanvas(r, Ink, playUnit = state.playUnit, startUnit = state.startUnit, startIsBar = state.startIsBar, onTap = onTap)
             }
         }
     }

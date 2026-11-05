@@ -3,33 +3,62 @@ package id.suaranote.core
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
-/** Uji susunan lagu dari tuts (not, rehat, hapus, birama, ikatan) serta ejaan dan not angka. */
+/** Uji susunan lagu dari tuts: simbol, hapus per simbol, birama, ikatan, serta ejaan dan not angka. */
 class ScoreTest {
 
     private fun song(vararg e: Pair<Int?, Int>): Composition =
         e.fold(Composition()) { c, (m, d) -> c.add(m, d) }
 
     private fun numbered(c: Composition, key: MusicKey = MusicKey.C, beats: Int = 4) =
-        NotationText.numbered(c.measures(beats), key)
+        NotationText.numbered(c, key, beats)
 
     @Test
     fun twinkleFromKeyPresses() {
         val c = song(60 to 4, 60 to 4, 67 to 4, 67 to 4, 69 to 4, 69 to 4, 67 to 8)
-        assertEquals("1 = C\n| 1 1 5 5 | 6 6 5 - |", numbered(c))
+        assertEquals("1 = C\n| 1 1 5 5 | 6 6 5 . |", numbered(c))
     }
 
     @Test
-    fun eighthNotesAndRests() {
+    fun eighthNotesRestsAndExtensionDots() {
         val c = song(60 to 2, 62 to 2, 64 to 2, 65 to 2, 67 to 8, 69 to 4, null to 4, 64 to 4)
-        assertEquals("1 = C\n| 1_ 2_ 3_ 4_ 5 - | 6 0 3 |", numbered(c))
+        assertEquals("1 = C\n| 1_ 2_ 3_ 4_ 5 . | 6 0 3 |", numbered(c))
     }
 
     @Test
-    fun longNoteIsTiedAcrossBarline() {
-        val m = song(60 to 12, 64 to 8).measures(4)
+    fun extensionLengthsAreDrawnAsDotsWithLines() {
+        assertEquals("1 = C\n| 1 . |", numbered(song(60 to 4).extend(4)))
+        assertEquals("1 = C\n| 1 ._ |", numbered(song(60 to 4).extend(2))) // setengah ketuk: titik + satu garis
+        assertEquals("1 = C\n| 1 .__ |", numbered(song(60 to 4).extend(1))) // seperempat ketuk: titik + dua garis
+        assertEquals("1 = C\n| 1 . ._ |", numbered(song(60 to 4).extend(6))) // 1,5 ketuk: dua simbol
+        assertEquals("1 = C\n| 1_ .__ |", numbered(song(60 to 3))) // 3/16 = 1/8 + 1/16
+        assertEquals("1 = C\n| 1 ._ |", numbered(song(60 to 6)))
+        assertEquals("1 = C\n| 0 0 |", numbered(song(null to 8))) // perpanjangan rehat tetap 0
+        assertEquals("", numbered(Composition()))
+    }
+
+    @Test
+    fun sharpAndFlatAreMarkedInText() {
+        assertEquals("1 = C\n| #4 |", numbered(song(66 to 4)))
+        assertEquals("1 = F\n| b7 |", numbered(song(75 to 4), MusicKey.F))
+    }
+
+    @Test
+    fun longNoteIsTiedAcrossBarlineInStaffAndContinuesWithDot() {
+        val c = song(60 to 12, 64 to 8)
+        val m = c.measures(4)
         assertEquals(2, m.size)
         assertEquals(listOf(NoteEvent(60, 12), NoteEvent(64, 4, tiedToNext = true)), m[0].events)
         assertEquals(listOf(NoteEvent(64, 4)), m[1].events)
+        assertEquals("1 = C\n| 1 . . 3 | . |", numbered(c))
+    }
+
+    @Test
+    fun symbolCrossingBarlineIsSplit() {
+        val t = song(60 to 14, 62 to 4).tokens(4)
+        assertEquals(2, t.size)
+        val last = t[0].last()
+        assertEquals(Token(62, 2, false, 14), last)
+        assertEquals(Token(62, 2, true, 16), t[1][0])
     }
 
     @Test
@@ -39,24 +68,44 @@ class ScoreTest {
     }
 
     @Test
-    fun deleteAlwaysRemovesOnlyTheLastEntry() {
-        var c = song(60 to 4, 62 to 4, 64 to 8, null to 4)
+    fun deleteRemovesOnlyTheLastSymbol() {
+        var c = song(60 to 4, 62 to 8, null to 4) // simbol: 1, 2, titik, 0
+        c = c.removeLast() // rehat
+        assertEquals("1 = C\n| 1 2 . |", numbered(c))
+        c = c.removeLast() // hanya titik perpanjangan, nada 2 tetap ada
+        assertEquals("1 = C\n| 1 2 |", numbered(c))
         c = c.removeLast()
-        assertEquals(listOf(60, 62, 64), c.events.map { it.midi })
+        assertEquals("1 = C\n| 1 |", numbered(c))
         c = c.removeLast()
-        assertEquals(listOf(60, 62), c.events.map { it.midi })
-        c = c.removeLast().removeLast()
-        assertEquals(emptyList<NoteEvent>(), c.events)
-        assertEquals(emptyList<NoteEvent>(), c.removeLast().events) // kosong: tidak error
+        assertEquals(true, c.isEmpty)
+        assertEquals(true, c.removeLast().isEmpty) // kosong: tidak error
     }
 
     @Test
-    fun deleteRemovesWholeNoteEvenWhenItIsSplitByBarline() {
+    fun deleteAfterExtendRemovesOnlyTheExtension() {
+        val c = song(60 to 4).extend(2).extend(1)
+        assertEquals("1 = C\n| 1 ._ .__ |", numbered(c))
+        assertEquals("1 = C\n| 1 ._ |", numbered(c.removeLast()))
+        assertEquals(listOf(NoteEvent(60, 4)), c.removeLast().removeLast().events)
+    }
+
+    @Test
+    fun deleteDropsTiedBarSplitPiece() {
         var c = song(60 to 12, 64 to 8)
         assertEquals(2, c.measures(4).size)
-        c = c.removeLast()
+        c = c.removeLast() // titik di birama kedua
         assertEquals(1, c.measures(4).size)
-        assertEquals(listOf(NoteEvent(60, 12)), c.measures(4)[0].events)
+        assertEquals(listOf(NoteEvent(60, 12), NoteEvent(64, 4)), c.measures(4)[0].events)
+    }
+
+    @Test
+    fun startPointsAndPartialPlayback() {
+        val c = song(60 to 8, 62 to 4)
+        assertEquals(0, c.eventStart(5))
+        assertEquals(8, c.eventStart(8))
+        assertEquals(listOf(NoteEvent(60, 2), NoteEvent(62, 4)), c.eventsFrom(6))
+        assertEquals(listOf(NoteEvent(62, 4)), c.eventsFrom(8))
+        assertEquals(c.events, c.eventsFrom(0))
     }
 
     @Test
@@ -64,39 +113,15 @@ class ScoreTest {
         val silent = ShortArray(Synth.RATE * 2)
         val mixed = Synth.mixClicks(silent, 120, 4) // tik tiap 0,5 detik
         assertEquals(silent.size, mixed.size)
-        fun energy(from: Double) = (0 until 600).sumOf { Math.abs(mixed[(from * Synth.RATE).toInt() + it].toInt()) }
-        assertEquals(true, energy(0.0) > 0)
-        assertEquals(true, energy(0.5) > 0)
-        assertEquals(true, energy(1.5) > 0)
-        assertEquals(0, energy(0.25)) // di antara ketukan sunyi
-    }
-
-    @Test
-    fun dotAndExtend() {
-        val c = song(60 to 4, 62 to 8)
-        assertEquals(12, c.dotLast().events.last().dur16) // setengah menjadi bertitik
-        assertEquals(listOf(60, 62), c.dotLast().events.map { it.midi })
-        assertEquals(false, c.dotLast().canDot()) // sudah bertitik: tidak ada titik ganda
-        assertEquals(6, song(60 to 4).dotLast().events.last().dur16)
-        assertEquals(3, song(60 to 2).dotLast().events.last().dur16)
-        assertEquals(song(60 to 1), song(60 to 1).dotLast()) // 1/16 tidak bisa dititik
-        assertEquals(Composition(), Composition().dotLast())
-        assertEquals(8, song(60 to 4).extendLast(4).events.last().dur16) // sambung satu ketuk
-        assertEquals(song(60 to 64), song(60 to 64).extendLast(4)) // batas
-        val dotted = Composition().add(60, 4).dotLast().add(62, 2).add(64, 8).add(null, 2)
-        assertEquals("1 = C\n| 1. 2_ 3 - | 0_ |", numbered(dotted))
-    }
-
-    @Test
-    fun liveLegatoNeverMakesRests() {
-        val unit = 60.0 / 90 / 4
-        assertEquals(2 to 2, LiveTiming.settle(0.2, 0.67, unit, 2))
-        assertEquals(4 to 0, LiveTiming.settle(0.2, 0.67, unit, 2, legato = true))
-    }
-
-    @Test(expected = IllegalArgumentException::class)
-    fun rejectsDurationOutOfRange() {
-        Composition().add(60, 0)
+        fun energy(m: ShortArray, from: Double) = (0 until 600).sumOf { Math.abs(m[(from * Synth.RATE).toInt() + it].toInt()) }
+        assertEquals(true, energy(mixed, 0.0) > 0)
+        assertEquals(true, energy(mixed, 0.5) > 0)
+        assertEquals(true, energy(mixed, 1.5) > 0)
+        assertEquals(0, energy(mixed, 0.25)) // di antara ketukan sunyi
+        // mulai dari satuan ke-2 (setengah ketuk): tik pertama jatuh 2 satuan (0,25 dtk) kemudian
+        val shifted = Synth.mixClicks(silent, 120, 4, offsetUnits = 2)
+        assertEquals(0, energy(shifted, 0.0))
+        assertEquals(true, energy(shifted, 0.25) > 0)
     }
 
     @Test
@@ -109,17 +134,23 @@ class ScoreTest {
         assertEquals(4 to 0, LiveTiming.settle(0.6, 0.67, unit, 2)) // legato dengan celah kecil
         assertEquals(2 to 2, LiveTiming.settle(0.2, 0.67, unit, 2)) // staccato: not 1/8 + rehat 1/8
         assertEquals(4 to 0, LiveTiming.settle(0.8, 0.67, unit, 2)) // tumpang tindih
+        assertEquals(4 to 0, LiveTiming.settle(0.2, 0.67, unit, 2, legato = true))
     }
 
     @Test
-    fun liveGrowingNoteAndLongNoteTies() {
+    fun liveRewriteOfGrowingNote() {
         var c = Composition().add(60, 2)
-        c = c.replaceLast(6).replaceLast(20)
-        assertEquals(listOf(NoteEvent(60, 20)), c.events)
+        val start = 0
+        c = c.truncate(start).add(60, 6).truncate(start).add(60, 20)
+        assertEquals(5, c.symbols.size)
         val m = c.measures(4) // 20 > 16: satu birama penuh + 4, diikat
         assertEquals(listOf(NoteEvent(60, 16, tiedToNext = true)), m[0].events)
         assertEquals(listOf(NoteEvent(60, 4)), m[1].events)
-        assertEquals(Composition(), Composition().replaceLast(4))
+    }
+
+    @Test(expected = IllegalArgumentException::class)
+    fun rejectsDurationOutOfRange() {
+        Composition().add(60, 0)
     }
 
     @Test

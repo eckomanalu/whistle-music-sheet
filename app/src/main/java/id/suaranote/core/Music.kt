@@ -155,16 +155,21 @@ fun durationStyle(dur16: Int): DurationStyle = when (dur16) {
 }
 
 object NotationText {
-    /** Not angka sebagai teks, mis. `| 1 1 5 5 | 6 6 5 - |`. ' = oktaf atas, , = oktaf bawah, _ = garis bawah. */
-    fun numbered(measures: List<Measure>, key: MusicKey, octaveOffset: Int = 0): String {
-        if (measures.isEmpty()) return ""
+    /**
+     * Not angka sebagai teks, mis. `| 1 1 5 5 | 6 6 5 . |`. ' = oktaf atas, , = oktaf bawah, _ = garis di atas
+     * (1/8 satu, 1/16 dua), # / b = kres / mol, . = perpanjangan (titik), 0 = rehat.
+     */
+    fun numbered(c: Composition, key: MusicKey, beatsPerBar: Int = 4, octaveOffset: Int = 0): String {
+        if (c.isEmpty) return ""
         val sb = StringBuilder("1 = ${key.label}\n|")
-        for (m in measures) {
-            for (e in m.events) {
+        for (bar in c.tokens(beatsPerBar)) {
+            for (t in bar) {
                 sb.append(' ')
-                val midi = e.midi
+                val midi = t.midi
                 if (midi == null) {
                     sb.append('0')
+                } else if (t.ext) {
+                    sb.append('.')
                 } else {
                     val n = Numbered.of(midi, key, octaveOffset)
                     if (n.accidental > 0) sb.append('#') else if (n.accidental < 0) sb.append('b')
@@ -172,11 +177,7 @@ object NotationText {
                     repeat(n.octaveShift.coerceAtLeast(0)) { sb.append('\'') }
                     repeat((-n.octaveShift).coerceAtLeast(0)) { sb.append(',') }
                 }
-                val st = durationStyle(e.dur16)
-                repeat(st.underlines) { sb.append('_') }
-                if (st.dotted) sb.append('.')
-                if (e.tiedToNext) sb.append('~')
-                repeat(st.dashes) { sb.append(" -") }
+                repeat(Chunks.lines(t.dur16)) { sb.append('_') }
             }
             sb.append(" |")
         }

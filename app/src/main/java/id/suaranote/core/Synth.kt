@@ -17,13 +17,14 @@ object Synth {
         }
     }
 
-    /** Menambahkan tik metronom tiap ketuk ke [pcm] (panjang tetap). */
-    fun mixClicks(pcm: ShortArray, bpm: Int, beatsPerBar: Int): ShortArray {
+    /** Menambahkan tik metronom tiap ketuk ke [pcm] (panjang tetap); [offsetUnits] = satuan 1/16 tempat pemutaran dimulai. */
+    fun mixClicks(pcm: ShortArray, bpm: Int, beatsPerBar: Int, offsetUnits: Int = 0): ShortArray {
         val out = pcm.copyOf()
-        val beat = RATE * 60.0 / bpm
-        var i = 0
+        val unit = RATE * 60.0 / bpm / 4
+        var i = offsetUnits / 4 // ketukan ke-i (mutlak) jatuh pada satuan 4*i; pemutaran mulai di [offsetUnits]
+        if (i * 4 < offsetUnits) i++
         while (true) {
-            val start = Math.round(i * beat).toInt()
+            val start = Math.round((i * 4 - offsetUnits) * unit).toInt()
             if (start >= out.size) break
             val c = click(i % beatsPerBar == 0)
             for (k in c.indices) {
