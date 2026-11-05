@@ -37,6 +37,9 @@ data class UiState(
     val playing: PlayWhat? = null,
     /** Selisih tala rata-rata (sen) yang terdeteksi, atau null bila tidak cukup konsisten. */
     val tuningCents: Int? = null,
+    /** Kontur nada hasil analisis (nomor MIDI pecahan per frame, NaN = tanpa nada) dan lebar frame (detik). */
+    val contour: FloatArray = FloatArray(0),
+    val contourHopSec: Float = 0.0116f,
     val error: String? = null,
 )
 
@@ -125,7 +128,11 @@ class MainViewModel : ViewModel() {
                     r to Transcriber.transcribe(r.frames, settings, r.effectiveOffset(settings.autoTune))
                 }
                 analysis = res
-                _state.update { it.copy(measures = measures, processing = false, tuningCents = cents(res)) }
+                val off = res.effectiveOffset(settings.autoTune)
+                val contour = FloatArray(res.frames.size) { i ->
+                    res.frames[i].freqHz?.let { (id.suaranote.core.Pitch.freqToMidi(it) - off).toFloat() } ?: Float.NaN
+                }
+                _state.update { it.copy(measures = measures, processing = false, tuningCents = cents(res), contour = contour) }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -142,7 +149,11 @@ class MainViewModel : ViewModel() {
             val measures = withContext(Dispatchers.Default) {
                 Transcriber.transcribe(res.frames, settings, res.effectiveOffset(settings.autoTune))
             }
-            _state.update { it.copy(measures = measures) }
+            val off = res.effectiveOffset(settings.autoTune)
+            val contour = FloatArray(res.frames.size) { i ->
+                res.frames[i].freqHz?.let { (id.suaranote.core.Pitch.freqToMidi(it) - off).toFloat() } ?: Float.NaN
+            }
+            _state.update { it.copy(measures = measures, contour = contour) }
         }
     }
 

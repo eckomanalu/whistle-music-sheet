@@ -40,6 +40,7 @@ import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -112,6 +113,7 @@ fun MainScreen(vm: MainViewModel = viewModel()) {
         state.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
 
         if (state.hasRecording && !state.processing) PlayCard(state, vm)
+        if (state.hasRecording && !state.processing && state.contour.isNotEmpty()) ContourCard(state)
 
         if (state.hasRecording && !state.processing) {
             if (state.measures.isEmpty()) {
@@ -294,6 +296,49 @@ private fun StaffCard(state: UiState) {
                     StaffRenderer.render(state.measures, s.key, s.beatsPerBar, widthPx, sp)
                 }
                 RenderedCanvas(r, Ink)
+            }
+        }
+    }
+}
+
+/** Titik = nada terukur tiap frame; garis = nada tepat. Titik yang jauh dari garis = nyanyian/deteksi meleset. */
+@Composable
+private fun ContourCard(state: UiState) {
+    val key = state.settings.key
+    val c = state.contour
+    var lo = Float.MAX_VALUE
+    var hi = -Float.MAX_VALUE
+    for (v in c) if (!v.isNaN()) { lo = minOf(lo, v); hi = maxOf(hi, v) }
+    if (lo > hi) return
+    val loI = kotlin.math.floor(lo - 0.5f).toInt()
+    val hiI = kotlin.math.ceil(hi + 0.5f).toInt()
+    val measurer = androidx.compose.ui.text.rememberTextMeasurer()
+    val lineColor = MaterialTheme.colorScheme.outlineVariant
+    val dotColor = MaterialTheme.colorScheme.primary
+    Card(colors = CardDefaults.cardColors(containerColor = Color.White)) {
+        Column(Modifier.padding(12.dp)) {
+            Text("Kontur nada", fontWeight = FontWeight.Bold, color = Ink)
+            Text("Titik di tengah garis = tepat. Titik di antara dua garis = meleset.", style = MaterialTheme.typography.bodySmall, color = Ink)
+            androidx.compose.foundation.Canvas(Modifier.fillMaxWidth().height(180.dp)) {
+                val left = 34.dp.toPx()
+                val w = size.width - left
+                val span = (hiI - loI).coerceAtLeast(1).toFloat()
+                fun y(m: Float) = size.height * (1f - (m - loI) / span)
+                for (m in loI..hiI) {
+                    val yy = y(m.toFloat())
+                    drawLine(lineColor, androidx.compose.ui.geometry.Offset(left, yy), androidx.compose.ui.geometry.Offset(size.width, yy), 1f)
+                    if (span <= 24 || m % 12 == 0) {
+                        drawText(measurer, id.suaranote.core.Spelling.noteName(m, key),
+                            topLeft = androidx.compose.ui.geometry.Offset(0f, yy - 8.dp.toPx()),
+                            style = androidx.compose.ui.text.TextStyle(fontSize = 9.sp, color = Ink))
+                    }
+                }
+                val n = c.size
+                for (i in 0 until n) {
+                    val v = c[i]
+                    if (v.isNaN()) continue
+                    drawCircle(dotColor, 1.8.dp.toPx(), androidx.compose.ui.geometry.Offset(left + w * i / n, y(v)))
+                }
             }
         }
     }

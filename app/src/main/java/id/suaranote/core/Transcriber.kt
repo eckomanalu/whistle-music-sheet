@@ -16,6 +16,7 @@ object Transcriber {
     private const val MIN_NOTE_SEC = 0.06
     private const val MEDIAN_SEC = 0.04
     private const val MAX_DROPOUT_SEC = 0.03
+    private const val GLIDE_SEC = 0.15
     private const val SWITCH_TOLERANCE = 0.65 // setengah nada
     private val PARTS = intArrayOf(16, 12, 8, 6, 4, 3, 2, 1)
 
@@ -47,7 +48,7 @@ object Transcriber {
             if (med[i].isNaN()) { i++; continue }
             var j = i
             while (j < n && !med[j].isNaN()) j++
-            for (s in segmentRun(med, i, j, minFrames)) segs += splitByEnergy(rms, s, minFrames)
+            for (s in segmentRun(med, i, j, minFrames, hop)) segs += splitByEnergy(rms, s, minFrames)
             i = j
         }
         if (segs.isEmpty()) return emptyList()
@@ -141,7 +142,7 @@ object Transcriber {
     }
 
     /** Segmentasi satu rentang bersuara menjadi not-not bernada tetap. */
-    private fun segmentRun(med: DoubleArray, start: Int, end: Int, minFrames: Int): List<Seg> {
+    private fun segmentRun(med: DoubleArray, start: Int, end: Int, minFrames: Int, hop: Double): List<Seg> {
         val segs = ArrayList<Seg>()
         var cur = med[start].roundToInt()
         var segStart = start
@@ -176,6 +177,23 @@ object Transcriber {
         }
 
         for (s in segs) s.midi = medianOf(med, s.start, s.end).roundToInt()
+
+        // Luncuran/scoop: penyanyi sering mulai sedikit di bawah nada lalu naik (atau berpindah legato
+        // lewat nada antara). Segmen sangat pendek yang bertetangga dengan nada lebih panjang dalam jarak
+        // <= 2 setengah nada dianggap bagian dari nada berikutnya, bukan not sendiri.
+        val glideFrames = maxOf(minFrames, ceil(GLIDE_SEC / hop - 1e-9).toInt())
+        var gi = 0
+        while (gi < segs.size - 1) {
+            val g = segs[gi]
+            val nx = segs[gi + 1]
+            if (g.end - g.start < glideFrames && nx.end - nx.start > g.end - g.start && abs(g.midi - nx.midi) <= 2) {
+                nx.start = g.start
+                segs.removeAt(gi)
+                nx.midi = medianOf(med, nx.start, nx.end).roundToInt()
+            } else {
+                gi++
+            }
+        }
 
         val merged = ArrayList<Seg>()
         for (s in segs) {
