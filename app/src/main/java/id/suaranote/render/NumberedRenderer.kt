@@ -20,7 +20,7 @@ object NumberedRenderer {
     private const val PAD = 0.7f
     private const val MARGIN = 0.4f
     private const val ROW_H = 3.4f
-    private const val BASELINE = 1.95f
+    private const val BASELINE = 2.3f
     private const val CAP = 0.72f
     private const val LINE_STEP = 0.17f
 
@@ -42,18 +42,29 @@ object NumberedRenderer {
         val widthFs = 2 * PAD + tks.sumOf { it.widthFs.toDouble() }.toFloat()
     }
 
+    /**
+     * [voices] = suara -> birama -> simbol. Jumlah birama tiap suara harus sama (suara pendek diberi birama kosong).
+     * Lebar birama = yang terlebar di antara suara, sehingga garis birama antar-suara sejajar.
+     */
     fun render(
-        tokens: List<List<Token>>,
+        voices: List<List<List<Token>>>,
         key: MusicKey,
         octaveOffset: Int,
         width: Float,
         fs: Float,
+        beatsPerBar: Int = 4,
     ): Rendering {
-        if (tokens.isEmpty()) return Rendering(width, 0f, emptyList())
+        val nv = voices.size
+        val nBars = voices.maxOfOrNull { it.size } ?: 0
+        if (nBars == 0) return Rendering(width, 0f, emptyList())
 
-        val meas = tokens.map { bar ->
-            Meas(bar.map { Tk(it, it.midi?.let { m -> Numbered.of(m, key, octaveOffset) }) })
+        // tks[suara][birama] -> simbol
+        val tks = voices.map { bars ->
+            List(nBars) { mi -> (bars.getOrNull(mi) ?: emptyList()).map { Tk(it, it.midi?.let { m -> Numbered.of(m, key, octaveOffset) }) } }
         }
+        fun sumW(v: Int, mi: Int) = tks[v][mi].sumOf { it.widthFs.toDouble() }.toFloat()
+        val innerW = FloatArray(nBars) { mi -> maxOf(1.5f, (0 until nv).maxOf { sumW(it, mi) }) }
+        val measW = FloatArray(nBars) { 2 * PAD + innerW[it] }
 
         val xLeft = MARGIN * fs
         val xRight = width - MARGIN * fs
@@ -62,46 +73,53 @@ object NumberedRenderer {
         // baris
         val rows = ArrayList<IntRange>()
         var i = 0
-        while (i < meas.size) {
+        while (i < nBars) {
             var j = i
             var sum = 0f
-            while (j < meas.size && (j == i || sum + meas[j].widthFs <= availFs)) {
-                sum += meas[j].widthFs
+            while (j < nBars && (j == i || sum + measW[j] <= availFs)) {
+                sum += measW[j]
                 j++
             }
             rows += i until j
             i = j
         }
 
-        val barLeft = FloatArray(meas.size)
-        val barRight = FloatArray(meas.size)
+        val barLeft = FloatArray(nBars)
+        val barRight = FloatArray(nBars)
+        val tokStretch = Array(nv) { FloatArray(nBars) }
         for ((ri, r) in rows.withIndex()) {
             val isLast = ri == rows.size - 1
-            val natural = r.sumOf { meas[it].widthFs.toDouble() }.toFloat()
+            val natural = r.sumOf { measW[it].toDouble() }.toFloat()
             val f = (availFs / natural).coerceIn(0.6f, if (isLast) 1.2f else 1.6f)
             var x = xLeft
             for (mi in r) {
                 barLeft[mi] = x
-                var cum = PAD
-                for (tk in meas[mi].tks) {
-                    tk.row = ri
-                    tk.cx = x + (cum + tk.widthFs / 2) * fs * f
-                    cum += tk.widthFs
+                for (v in 0 until nv) {
+                    val own = sumW(v, mi)
+                    // suara yang lebih jarang melebar mengisi birama, paling banyak 1,6x
+                    val sv = f * if (own > 0f) minOf(innerW[mi] / own, 1.6f) else 1f
+                    tokStretch[v][mi] = sv
+                    var cum = PAD * f
+                    for (tk in tks[v][mi]) {
+                        tk.row = ri
+                        tk.cx = x + (cum + tk.widthFs * sv / 2) * fs
+                        cum += tk.widthFs * sv
+                    }
                 }
-                x += meas[mi].widthFs * fs * f
+                x += measW[mi] * fs * f
                 barRight[mi] = x
             }
         }
 
         // kelompok garis: simbol bergaris pada ketukan yang sama, berurutan
-        for (m in meas) {
+        for (v in 0 until nv) for (mi in 0 until nBars) {
             var cur = ArrayList<Tk>()
             var curBeat = -1
             fun flush() {
                 if (cur.size >= 2) for (tk in cur) tk.group = cur
                 cur = ArrayList()
             }
-            for (tk in m.tks) {
+            for (tk in tks[v][mi]) {
                 val beat = tk.t.startUnit / 4
                 if (tk.lines > 0 && cur.isNotEmpty() && curBeat == beat) {
                     cur += tk
@@ -113,36 +131,44 @@ object NumberedRenderer {
             flush()
         }
 
-        fun baseline(row: Int) = row * ROW_H * fs + BASELINE * fs
+        val rowH = (nv * ROW_H + 0.4f) * fs
+        fun baseline(row: Int, v: Int) = row * rowH + (v * ROW_H + BASELINE) * fs
 
         val ops = ArrayList<DrawOp>()
         val hits = ArrayList<Hit>()
         val bars = ArrayList<Bar>()
         for ((ri, r) in rows.withIndex()) {
-            val by = baseline(ri)
-            val top = by - 1.7f * fs
-            val bottom = by + 0.8f * fs
+            for (v in 0 until nv) {
+                val by = baseline(ri, v)
+                val top = by - 1.7f * fs
+                val bottom = by + 0.8f * fs
+                for (mi in r) {
+                    for (tk in tks[v][mi]) {
+                        drawToken(tk, by, ops, fs)
+                        val half = tk.widthFs / 2 * fs * tokStretch[v][mi]
+                        hits += Hit(
+                            tk.t.startUnit, tk.t.startUnit + tk.t.dur16,
+                            tk.cx - half, top, tk.cx + half, bottom, tk.opIds.toList(), v,
+                        )
+                    }
+                    bars += Bar(mi, mi * beatsPerBar * 4, barLeft[mi], top, barRight[mi], bottom, v)
+                    val bx = barRight[mi]
+                    if (mi == nBars - 1) {
+                        ops += LineOp(bx - 0.35f * fs, by - 1.0f * fs, bx - 0.35f * fs, by + 0.55f * fs, 0.07f * fs)
+                        ops += LineOp(bx - 0.12f * fs, by - 1.0f * fs, bx - 0.12f * fs, by + 0.55f * fs, 0.2f * fs)
+                    } else {
+                        ops += LineOp(bx, by - 1.0f * fs, bx, by + 0.55f * fs, 0.07f * fs)
+                    }
+                }
+            }
+            // nomor birama di atas suara pertama
             for (mi in r) {
-                for (tk in meas[mi].tks) {
-                    drawToken(tk, by, ops, fs)
-                    val half = tk.widthFs / 2 * fs * ((barRight[mi] - barLeft[mi]) / (meas[mi].widthFs * fs))
-                    hits += Hit(
-                        tk.t.startUnit, tk.t.startUnit + tk.t.dur16,
-                        tk.cx - half, top, tk.cx + half, bottom, tk.opIds.toList(),
-                    )
-                }
-                bars += Bar(mi, meas[mi].tks.first().t.startUnit, barLeft[mi], top, barRight[mi], bottom)
-                val bx = barRight[mi]
-                if (mi == meas.size - 1) {
-                    ops += LineOp(bx - 0.35f * fs, by - 1.0f * fs, bx - 0.35f * fs, by + 0.55f * fs, 0.07f * fs)
-                    ops += LineOp(bx - 0.12f * fs, by - 1.0f * fs, bx - 0.12f * fs, by + 0.55f * fs, 0.2f * fs)
-                } else {
-                    ops += LineOp(bx, by - 1.0f * fs, bx, by + 0.55f * fs, 0.07f * fs)
-                }
+                val label = (mi + 1).toString()
+                ops += TextOp(label, barLeft[mi] + (0.2f + 0.13f * label.length) * fs, baseline(ri, 0) - 1.45f * fs, 0.42f * fs)
             }
         }
 
-        return Rendering(width, rows.size * ROW_H * fs, ops, hits, bars)
+        return Rendering(width, rows.size * rowH, ops, hits, bars)
     }
 
     private fun drawToken(tk: Tk, by: Float, ops: MutableList<DrawOp>, fs: Float) {

@@ -148,6 +148,101 @@ class ScoreTest {
         assertEquals(listOf(NoteEvent(60, 4)), m[1].events)
     }
 
+    // ----------------------------------------------------------- sisip, timpa, salin, suara
+
+    private fun nums(c: Composition, beats: Int = 4) = numbered(c, MusicKey.C, beats).substringAfter("\n")
+
+    @Test
+    fun insertAtCursorShiftsLaterNotes() {
+        val c = song(60 to 4, 62 to 4, 64 to 4, 65 to 4)
+        assertEquals("| 1 2 3 4 |", nums(c))
+        assertEquals("| 1 2 5 3 | 4 |", nums(c.insertNote(8, 67, 4)))
+        assertEquals("| 5 1 2 3 | 4 |", nums(c.insertNote(0, 67, 4)))
+        // di luar ujung: diisi rehat dulu
+        assertEquals("| 1 2 3 4 | 0 5 |", nums(c.insertNote(20, 67, 4)))
+        // di tengah not panjang: sisanya jadi kepala baru (tidak menempel ke not yang disisipkan)
+        val long = song(60 to 8, 64 to 8)
+        assertEquals("| 1 5 1 3 | . |", nums(long.insertNote(4, 67, 4)))
+    }
+
+    @Test
+    fun insertExtensionAndBackspaceAtCursor() {
+        val c = song(60 to 4, 62 to 4, 64 to 4)
+        assertEquals("| 1 . 2 3 |", nums(c.insertExtension(4, 4)))
+        assertEquals(4, c.symbolBefore(4)!!.dur16)
+        assertEquals("| 1 3 |", nums(c.removeBefore(8)))
+        assertEquals(null, c.symbolBefore(0))
+        // hapus kepala not yang punya perpanjangan: perpanjangan jadi kepala sendiri
+        val d = song(60 to 8, 62 to 4)
+        assertEquals("| 1 . 2 |", nums(d))
+        assertEquals("| 1 2 |", nums(d.removeBefore(4)))
+    }
+
+    @Test
+    fun sliceCopiesWholeBarsAndPadsWithRests() {
+        val c = song(60 to 4, 62 to 4, 64 to 4, 65 to 4, 67 to 4, 69 to 4)
+        val bar1 = c.slice(0, 16)
+        assertEquals(4, bar1.size)
+        // bar kedua hanya terisi setengah: sisanya rehat
+        val bar2 = c.slice(16, 32)
+        assertEquals(16, bar2.sumOf { it.dur16 })
+        assertEquals(listOf<Int?>(67, 69, null), bar2.filter { !it.ext }.map { it.midi }) // sisa 2 ketuk = satu rehat
+        // memotong tepat di tengah not panjang: potongan pertama jadi kepala
+        val long = song(60 to 16, 62 to 16)
+        val cut = long.slice(8, 24)
+        assertEquals(false, cut.first().ext)
+        assertEquals(16, cut.sumOf { it.dur16 })
+    }
+
+    @Test
+    fun pasteInsertAndOverwriteAndCopyToEnd() {
+        // bar 1: 1 2 3 4 ; bar 2: 5 6 7 1'
+        val c = song(60 to 4, 62 to 4, 64 to 4, 65 to 4, 67 to 4, 69 to 4, 71 to 4, 72 to 4)
+        val clip = c.slice(0, 16)
+        // sisip di awal bar 2: bar 2 lama jadi bar 3
+        assertEquals("| 1 2 3 4 | 1 2 3 4 | 5 6 7 1' |", nums(c.insertAt(16, clip)))
+        // timpa bar 2: not lama di bar 2 terhapus
+        assertEquals("| 1 2 3 4 | 1 2 3 4 |", nums(c.replaceRange(16, 32, clip)))
+        // timpa di luar ujung memperpanjang lagu dan mengisi rehat bila perlu
+        assertEquals("| 1 2 3 4 | 5 6 7 1' | 0 0 0 0 | 1 2 3 4 |", nums(c.replaceRange(48, 64, clip)))
+        // salin ke bar terakhir (ditempel setelahnya)
+        assertEquals("| 1 2 3 4 | 5 6 7 1' | 1 2 3 4 |", nums(c.padTo(32).append(clip)))
+        // timpa memotong not panjang di tepi dengan benar
+        val long = song(60 to 16, 62 to 16)
+        val over = long.replaceRange(8, 16, listOf(Symbol(67, 4, false), Symbol(69, 4, false)))
+        assertEquals(32, over.totalUnits)
+        assertEquals("| 1 . 5 6 | 2 . . . |", nums(over))
+    }
+
+    @Test
+    fun scoreAlignsVoicesAndPadsShortOnes() {
+        val a = song(60 to 16, 62 to 16, 64 to 16)
+        val b = song(48 to 16)
+        val score = Score(listOf(a, b))
+        assertEquals(3, score.barCount(4))
+        assertEquals(listOf(3, 3), score.measures(4).map { it.size })
+        assertEquals(listOf(3, 3), score.tokens(4).map { it.size })
+        assertEquals(true, score.measures(4)[1][1].events.isEmpty())
+        assertEquals(48, score.totalUnits)
+    }
+
+    @Test
+    fun voicesAreMixedForPlayback() {
+        val a = song(60 to 8).events
+        val b = song(64 to 4, 67 to 4).events
+        val one = Synth.renderVoices(listOf(a), 120)
+        val two = Synth.renderVoices(listOf(a, b), 120)
+        assertEquals(one.size, two.size)
+        // campuran = jumlah kedua suara (dikecilkan 0,75), bukan salah satunya saja
+        val bOnly = Synth.renderVoices(listOf(b), 120)
+        for (i in intArrayOf(500, 3000, 9000, 15000)) {
+            assertEquals(((one[i] + bOnly[i]) * 0.75).toInt(), two[i].toInt())
+        }
+        assertEquals(0, Synth.renderVoices(emptyList(), 120).size)
+        // suara berbeda panjang: hasil sepanjang yang terpanjang
+        assertEquals(Synth.renderVoices(listOf(song(60 to 16).events), 120).size, Synth.renderVoices(listOf(a, song(60 to 16).events), 120).size)
+    }
+
     @Test(expected = IllegalArgumentException::class)
     fun rejectsDurationOutOfRange() {
         Composition().add(60, 0)

@@ -35,8 +35,7 @@ data class Composition(val symbols: List<Symbol> = emptyList()) {
     /** Menambah not/rehat berpanjang [dur16]: satu kepala + perpanjangan per ketuk. */
     fun add(midi: Int?, dur16: Int): Composition {
         checked(dur16)
-        val chunks = Chunks.of(dur16)
-        return Composition(symbols + chunks.mapIndexed { i, c -> Symbol(midi, c, ext = i > 0) })
+        return Composition(symbols + symbolsFor(midi, dur16))
     }
 
     /** Sambung: menambah perpanjangan sebesar [by] pada not/rehat terakhir (digambar sebagai titik). */
@@ -89,6 +88,131 @@ data class Composition(val symbols: List<Symbol> = emptyList()) {
         return out
     }
 
+    // ------------------------------------------------------------------
+    // Penyuntingan di titik sembarang (satuan waktu mutlak, 1/16)
+    // ------------------------------------------------------------------
+
+    /** Menambah rehat di ujung sampai lagu sepanjang [unit] (tidak berbuat apa-apa bila sudah sepanjang itu). */
+    fun padTo(unit: Int): Composition {
+        var c = this
+        while (c.totalUnits < unit) c = c.add(null, minOf(MAX_DUR16, unit - c.totalUnits))
+        return c
+    }
+
+    /** Membuat batas simbol tepat di [unit] (memotong simbol yang melintasi titik itu menjadi dua). */
+    fun splitAt(unit: Int): Composition {
+        var pos = 0
+        for ((i, s) in symbols.withIndex()) {
+            val end = pos + s.dur16
+            if (unit > pos && unit < end) {
+                val first = Chunks.of(unit - pos).mapIndexed { k, c -> Symbol(s.midi, c, ext = s.ext || k > 0) }
+                val second = Chunks.of(end - unit).map { Symbol(s.midi, it, ext = true) }
+                return Composition(symbols.take(i) + first + second + symbols.drop(i + 1))
+            }
+            pos = end
+        }
+        return this
+    }
+
+    /** Jumlah simbol yang mulai sebelum [unit] = indeks sisip untuk titik itu. */
+    private fun indexAt(unit: Int): Int {
+        var pos = 0
+        var i = 0
+        while (i < symbols.size && pos < unit) { pos += symbols[i].dur16; i++ }
+        return i
+    }
+
+    /**
+     * Perpanjangan yang kehilangan kepala (mis. kepalanya terhapus atau tergantikan) dijadikan kepala
+     * baru, supaya tidak "menempel" ke not lain di depannya.
+     */
+    private fun fixOrphans(): Composition {
+        var changed = false
+        val out = symbols.mapIndexed { i, s ->
+            if (s.ext && (i == 0 || symbols[i - 1].midi != s.midi)) { changed = true; s.copy(ext = false) } else s
+        }
+        return if (changed) Composition(out) else this
+    }
+
+    /** Menyisipkan [syms] mulai [unit]; isi sesudahnya bergeser. Bila [unit] di luar ujung, diisi rehat dulu. */
+    fun insertAt(unit: Int, syms: List<Symbol>): Composition {
+        val c = padTo(unit).splitAt(unit)
+        val idx = c.indexAt(unit)
+        return Composition(c.symbols.take(idx) + syms + c.symbols.drop(idx)).fixOrphans()
+    }
+
+    fun insertNote(unit: Int, midi: Int?, dur16: Int): Composition {
+        checked(dur16)
+        return insertAt(unit, symbolsFor(midi, dur16))
+    }
+
+    /** Menyisipkan perpanjangan (titik) sebesar [by] tepat setelah not/rehat yang berakhir di [unit]. */
+    fun insertExtension(unit: Int, by: Int): Composition {
+        checked(by)
+        val c = splitAt(unit)
+        val prev = c.symbolBefore(unit) ?: return this
+        return c.insertAt(unit, Chunks.of(by).map { Symbol(prev.midi, it, ext = true) })
+    }
+
+    /** Simbol yang berakhir tepat di [unit] (null bila [unit] di awal atau di luar lagu). */
+    fun symbolBefore(unit: Int): Symbol? {
+        var pos = 0
+        for (s in symbols) {
+            pos += s.dur16
+            if (pos == unit) return s
+            if (pos > unit) return null
+        }
+        return null
+    }
+
+    /** Menghapus satu simbol yang berakhir di [unit] (seperti backspace); isi sesudahnya bergeser maju. */
+    fun removeBefore(unit: Int): Composition {
+        val c = splitAt(unit)
+        var pos = 0
+        for ((i, s) in c.symbols.withIndex()) {
+            pos += s.dur16
+            if (pos == unit) return Composition(c.symbols.take(i) + c.symbols.drop(i + 1)).fixOrphans()
+            if (pos > unit) break
+        }
+        return this
+    }
+
+    /** Menempelkan [syms] di ujung (kepala pertama tetap kepala). */
+    fun append(syms: List<Symbol>): Composition = Composition(symbols + syms).fixOrphans()
+
+    /** Isi satuan [a, b) sebagai simbol yang berdiri sendiri; bagian yang melewati ujung lagu diisi rehat. */
+    fun slice(a: Int, b: Int): List<Symbol> {
+        val out = ArrayList<Symbol>()
+        var pos = 0
+        for (s in symbols) {
+            val end = pos + s.dur16
+            val lo = maxOf(pos, a)
+            val hi = minOf(end, b)
+            if (hi > lo) {
+                if (hi - lo == s.dur16) out += s
+                else out += Chunks.of(hi - lo).mapIndexed { k, c -> Symbol(s.midi, c, ext = (lo == pos && s.ext) || k > 0) }
+            }
+            pos = end
+        }
+        val got = out.sumOf { it.dur16 }
+        var missing = (b - a) - got
+        while (missing > 0) {
+            val n = minOf(MAX_DUR16, missing)
+            out += symbolsFor(null, n)
+            missing -= n
+        }
+        if (out.isNotEmpty() && out[0].ext) out[0] = out[0].copy(ext = false)
+        return out
+    }
+
+    /** Menimpa satuan [a, b) dengan [syms] (yang sepanjang b - a); not lama di rentang itu terhapus. */
+    fun replaceRange(a: Int, b: Int, syms: List<Symbol>): Composition {
+        val c = padTo(a).splitAt(a).splitAt(b)
+        val from = c.indexAt(a)
+        val to = c.indexAt(b)
+        return Composition(c.symbols.take(from) + syms + c.symbols.drop(maxOf(from, to))).fixOrphans()
+    }
+
     fun measures(beatsPerBar: Int): List<Measure> = ScoreBuilder.build(events, beatsPerBar * 4)
 
     /** Simbol not angka per birama; simbol yang melewati garis birama dipotong, sisanya jadi perpanjangan. */
@@ -116,12 +240,43 @@ data class Composition(val symbols: List<Symbol> = emptyList()) {
     }
 
     companion object {
+        /** Simbol untuk satu not/rehat berpanjang [dur16]: satu kepala + perpanjangan per ketuk. */
+        fun symbolsFor(midi: Int?, dur16: Int): List<Symbol> =
+            Chunks.of(dur16).mapIndexed { i, c -> Symbol(midi, c, ext = i > 0) }
+
         /** Panjang yang bisa dipilih: 4, 3, 2, 1,5, 1, 0,75, 0,5, 0,25 ketuk. */
         val DURATIONS = listOf(16, 12, 8, 6, 4, 3, 2, 1)
 
         /** Batas panjang sekali masuk (4 birama 4/4). */
         const val MAX_DUR16 = 64
         private const val MAX_TOTAL = 4096
+    }
+}
+
+/** Beberapa suara (lapisan) dengan sumbu waktu yang sama; birama antar-suara selalu sejajar. */
+data class Score(val voices: List<Composition> = listOf(Composition())) {
+    val totalUnits: Int get() = voices.maxOfOrNull { it.totalUnits } ?: 0
+
+    fun barCount(beatsPerBar: Int): Int = (totalUnits + beatsPerBar * 4 - 1) / (beatsPerBar * 4)
+
+    fun withVoice(index: Int, c: Composition): Score =
+        Score(voices.mapIndexed { i, v -> if (i == index) c else v })
+
+    /** Not balok per suara; suara yang lebih pendek diberi birama kosong supaya jumlah birama sama. */
+    fun measures(beatsPerBar: Int): List<List<Measure>> {
+        val n = barCount(beatsPerBar)
+        return voices.map { v ->
+            val m = v.measures(beatsPerBar)
+            m + List(maxOf(0, n - m.size)) { Measure(emptyList()) }
+        }
+    }
+
+    fun tokens(beatsPerBar: Int): List<List<List<Token>>> {
+        val n = barCount(beatsPerBar)
+        return voices.map { v ->
+            val t = v.tokens(beatsPerBar)
+            t + List(maxOf(0, n - t.size)) { emptyList<Token>() }
+        }
     }
 }
 

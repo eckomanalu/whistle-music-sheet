@@ -56,53 +56,133 @@ object StaffRenderer {
             get() = group?.beamStep ?: if (stemUp) max(step + 7, 4) else min(step - 7, 4)
     }
 
-    private class Meas(val evs: List<Ev>) {
-        val widthSp: Float = 2 * PAD + evs.sumOf { it.totalSp.toDouble() }.toFloat()
+    private class Meas(val evs: List<Ev>, minWidthSp: Float = 0f) {
+        val ownSp: Float = 2 * PAD + evs.sumOf { it.totalSp.toDouble() }.toFloat()
+        val widthSp: Float = maxOf(ownSp, minWidthSp, 2 * PAD + 2f)
         var xStart = 0f
         var xEnd = 0f
         var startUnit = 0
     }
 
     private class Sys(val first: Int, val last: Int) { // indeks birama, inklusif
-        var topStep = 11
+        var topStep = 12
         var bottomStep = -4
         var yBottomLine = 0f
         var contentLeft = 0f
         var rightEdge = 0f
     }
 
-    fun render(measures: List<Measure>, key: MusicKey, beatsPerBar: Int, width: Float, sp: Float): Rendering {
+    /** Lebar alami tiap birama (satuan spasi paranada); dipakai untuk menyamakan lebar antar-suara. */
+    fun naturalWidths(measures: List<Measure>, key: MusicKey): FloatArray =
+        FloatArray(measures.size) { maxOf(prepare(measures[it], key).ownSp, 2 * PAD + 2f) }
+
+    private fun headerSp(keyCount: Int, first: Boolean): Float =
+        3.6f + (if (keyCount > 0) keyCount * 1.1f + 0.6f else 0f) + (if (first) 2.4f else 0f)
+
+    /** Membagi birama ke baris (sistem): setiap kelompok memuat birama sebanyak yang muat di [width]. */
+    fun groupBars(widthsSp: FloatArray, key: MusicKey, width: Float, sp: Float): List<IntRange> {
+        val keyCount = kotlin.math.abs(key.fifths)
+        val totalSp = (width - 2 * MARGIN * sp) / sp
+        val out = ArrayList<IntRange>()
+        var i = 0
+        while (i < widthsSp.size) {
+            val avail = totalSp - headerSp(keyCount, out.isEmpty())
+            var j = i
+            var sum = 0f
+            while (j < widthsSp.size && (j == i || sum + widthsSp[j] <= avail)) {
+                sum += widthsSp[j]
+                j++
+            }
+            out += i until j
+            i = j
+        }
+        return out
+    }
+
+    /**
+     * Beberapa suara: tiap kelompok birama digambar sebagai satu baris per suara (bertumpuk), dengan lebar
+     * birama yang sama antar-suara. Hanya suara pertama yang diberi nomor birama.
+     */
+    fun renderVoices(voices: List<List<Measure>>, key: MusicKey, beatsPerBar: Int, width: Float, sp: Float): Rendering {
+        val n = voices.maxOfOrNull { it.size } ?: 0
+        if (n == 0) return Rendering(width, 0f, emptyList())
+        val padded = voices.map { it + List(n - it.size) { Measure(emptyList()) } }
+        val widths = FloatArray(n) { mi -> padded.maxOf { naturalWidths(listOf(it[mi]), key)[0] } }
+        val groups = groupBars(widths, key, width, sp)
+        val ops = ArrayList<DrawOp>()
+        val hits = ArrayList<Hit>()
+        val bars = ArrayList<Bar>()
+        var y = 0f
+        for ((gi, g) in groups.withIndex()) {
+            for ((vi, v) in padded.withIndex()) {
+                val prevLast = if (g.first > 0) v[g.first - 1].events.lastOrNull() else null
+                val r = render(
+                    v.subList(g.first, g.last + 1), key, beatsPerBar, width, sp,
+                    minWidthsSp = widths.copyOfRange(g.first, g.last + 1),
+                    singleSystem = true,
+                    firstGroup = gi == 0,
+                    lastGroup = gi == groups.size - 1,
+                    measureOffset = g.first,
+                    incomingTie = prevLast != null && prevLast.tiedToNext && prevLast.midi != null,
+                    barNumbers = vi == 0,
+                )
+                val base = ops.size
+                for (op in r.ops) ops += op.shiftY(y)
+                for (h in r.hits) hits += h.copy(top = h.top + y, bottom = h.bottom + y, ops = h.ops.map { it + base }, voice = vi)
+                for (b in r.bars) bars += b.copy(top = b.top + y, bottom = b.bottom + y, voice = vi)
+                y += r.height
+            }
+            y += 0.8f * sp
+        }
+        return Rendering(width, y, ops, hits, bars)
+    }
+
+    private fun DrawOp.shiftY(dy: Float): DrawOp = when (this) {
+        is LineOp -> copy(y1 = y1 + dy, y2 = y2 + dy)
+        is GlyphOp -> copy(y = y + dy)
+        is DotOp -> copy(y = y + dy)
+        is TieOp -> copy(y = y + dy)
+        is TextOp -> copy(baseline = baseline + dy)
+    }
+
+    fun render(
+        measures: List<Measure>,
+        key: MusicKey,
+        beatsPerBar: Int,
+        width: Float,
+        sp: Float,
+        minWidthsSp: FloatArray? = null,
+        singleSystem: Boolean = false,
+        firstGroup: Boolean = true,
+        lastGroup: Boolean = true,
+        measureOffset: Int = 0,
+        incomingTie: Boolean = false,
+        barNumbers: Boolean = true,
+    ): Rendering {
         if (measures.isEmpty()) return Rendering(width, 0f, emptyList())
 
-        val meas = measures.map { prepare(it, key) }
+        val meas = measures.mapIndexed { i, m -> prepare(m, key, minWidthsSp?.getOrNull(i) ?: 0f) }
         val keyCount = kotlin.math.abs(key.fifths)
 
         // ---- pengelompokan birama ke dalam baris (sistem) ----
         val xLeft = MARGIN * sp
         val xRight = width - MARGIN * sp
         val totalSp = (xRight - xLeft) / sp
-        fun headerSp(first: Boolean): Float =
-            3.6f + (if (keyCount > 0) keyCount * 1.1f + 0.6f else 0f) + (if (first) 2.4f else 0f)
+        fun headerSp(first: Boolean): Float = headerSp(keyCount, first && firstGroup)
 
+        val widthsAll = FloatArray(meas.size) { meas[it].widthSp }
         val systems = ArrayList<Sys>()
-        var i = 0
-        while (i < meas.size) {
-            val avail = totalSp - headerSp(systems.isEmpty())
-            var j = i
-            var sum = 0f
-            while (j < meas.size && (j == i || sum + meas[j].widthSp <= avail)) {
-                sum += meas[j].widthSp
-                j++
-            }
-            systems += Sys(i, j - 1)
-            i = j
+        if (singleSystem) {
+            systems += Sys(0, meas.size - 1)
+        } else {
+            for (g in groupBars(widthsAll, key, width, sp)) systems += Sys(g.first, g.last)
         }
 
         // satuan waktu mutlak (1/16) tiap birama dan not
-        var unitCursor = 0
-        for (m in meas) {
-            m.startUnit = unitCursor
-            for (ev in m.evs) { ev.startUnit = unitCursor; unitCursor += ev.e.dur16 }
+        for ((mi, m) in meas.withIndex()) {
+            m.startUnit = (measureOffset + mi) * beatsPerBar * 4
+            var p = m.startUnit
+            for (ev in m.evs) { ev.startUnit = p; p += ev.e.dur16 }
         }
 
         // ---- posisi horizontal ----
@@ -110,7 +190,7 @@ object StaffRenderer {
         val flat = ArrayList<Ev>()
         val barlineX = ArrayList<Float>(meas.size)
         for ((si, s) in systems.withIndex()) {
-            val isLast = si == systems.size - 1
+            val isLast = si == systems.size - 1 && lastGroup
             val avail = totalSp - headerSp(si == 0)
             val natural = (s.first..s.last).sumOf { meas[it].widthSp.toDouble() }.toFloat()
             val stretchCap = if (isLast) 1.15f else 1.5f
@@ -122,13 +202,15 @@ object StaffRenderer {
             for (mi in s.first..s.last) {
                 val m = meas[mi]
                 m.xStart = x
+                // birama yang lebih jarang dari lebar bersama (suara lain lebih padat) dilonggarkan, paling banyak 1,6x
+                val g = f * minOf(m.widthSp / m.ownSp, 1.6f)
                 var cum = PAD
                 for (ev in m.evs) {
-                    ev.left = x + cum * sp * f
-                    ev.cx = x + (cum + ev.accSp + ev.baseSp / 2) * sp * f
+                    ev.left = x + cum * sp * g
+                    ev.cx = x + (cum + ev.accSp + ev.baseSp / 2) * sp * g
                     ev.sys = si
                     cum += ev.totalSp
-                    ev.right = x + cum * sp * f
+                    ev.right = x + cum * sp * g
                     flat += ev
                 }
                 x += m.widthSp * sp * f
@@ -180,7 +262,7 @@ object StaffRenderer {
                 kx += 1.1f * sp
             }
             // birama (hanya sistem pertama)
-            if (si == 0) {
+            if (si == 0 && firstGroup) {
                 val tx = s.contentLeft - 2.2f * sp
                 val top = when (beatsPerBar) { 2 -> Glyph.TIME_2; 3 -> Glyph.TIME_3; else -> Glyph.TIME_4 }
                 ops += GlyphOp(top, tx, y(s, 6), sp)
@@ -196,7 +278,7 @@ object StaffRenderer {
 
                 // garis birama
                 val bx = barlineX[mi]
-                if (mi == meas.size - 1) {
+                if (mi == meas.size - 1 && lastGroup) {
                     ops += LineOp(bx - 0.6f * sp, y(s, 8), bx - 0.6f * sp, y(s, 0), BAR_T * sp)
                     ops += LineOp(bx - 0.25f * sp, y(s, 8), bx - 0.25f * sp, y(s, 0), 0.5f * sp)
                 } else {
@@ -226,6 +308,30 @@ object StaffRenderer {
             }
         }
 
+        // ikatan yang masuk dari baris sebelumnya / keluar ke baris berikutnya (render per kelompok birama)
+        if (incomingTie && flat.isNotEmpty() && flat.first().isNote) {
+            val b = flat.first()
+            val sb = systems[b.sys]
+            val yb = y(sb, b.step) + (if (!b.stemUp) -0.7f else 0.7f) * sp
+            ops += TieOp(sb.contentLeft - 0.6f * sp, b.cx - 0.45f * sp, yb, !b.stemUp, 0.45f * sp, 0.14f * sp)
+        }
+        val lastEv = flat.lastOrNull()
+        if (!lastGroup && lastEv != null && lastEv.isNote && lastEv.e.tiedToNext) {
+            val sa = systems[lastEv.sys]
+            val up = !lastEv.stemUp
+            val ya = y(sa, lastEv.step) + (if (up) -0.7f else 0.7f) * sp
+            ops += TieOp(lastEv.cx + 0.45f * sp, sa.rightEdge - 0.2f * sp, ya, up, 0.45f * sp, 0.14f * sp)
+        }
+
+        // nomor birama
+        if (barNumbers) {
+            for ((mi, m) in meas.withIndex()) {
+                val sys = systems.first { mi in it.first..it.last }
+                val label = (measureOffset + mi + 1).toString()
+                ops += TextOp(label, m.xStart + (0.35f + 0.3f * label.length) * sp, y(sys, sys.topStep) + 0.95f * sp, 0.95f * sp)
+            }
+        }
+
         val hits = ArrayList<Hit>()
         val bars = ArrayList<Bar>()
         for ((mi, m) in meas.withIndex()) {
@@ -243,7 +349,7 @@ object StaffRenderer {
 
     // ------------------------------------------------------------------
 
-    private fun prepare(m: Measure, key: MusicKey): Meas {
+    private fun prepare(m: Measure, key: MusicKey, minWidthSp: Float = 0f): Meas {
         val evs = ArrayList<Ev>()
         for (e in m.events) {
             val midi = e.midi
@@ -284,7 +390,7 @@ object StaffRenderer {
             pos += ev.e.dur16
         }
         flush()
-        return Meas(evs)
+        return Meas(evs, minWidthSp)
     }
 
     private fun drawEvent(ev: Ev, s: Sys, ops: MutableList<DrawOp>, sp: Float, y: (Sys, Int) -> Float) {

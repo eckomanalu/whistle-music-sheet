@@ -36,6 +36,20 @@ object Synth {
         return out
     }
 
+    /** Memainkan beberapa suara sekaligus (dijumlahkan, dengan sedikit pengecilan agar tidak pecah). */
+    fun renderVoices(voices: List<List<NoteEvent>>, bpm: Int): ShortArray {
+        val parts = voices.filter { it.isNotEmpty() }.map { render(listOf(Measure(it)), bpm) }
+        if (parts.isEmpty()) return ShortArray(0)
+        val gain = if (parts.size > 1) 0.75 else 1.0
+        val out = ShortArray(parts.maxOf { it.size })
+        for (i in out.indices) {
+            var sum = 0.0
+            for (p in parts) if (i < p.size) sum += p[i]
+            out[i] = (sum * gain).toInt().coerceIn(-32768, 32767).toShort()
+        }
+        return out
+    }
+
     /** Satu nada tunggal, untuk bunyi saat tuts ditekan. */
     fun note(midi: Int, seconds: Double): ShortArray =
         render(listOf(Measure(listOf(NoteEvent(midi, 1)))), (60.0 / (seconds * 4)).toInt().coerceAtLeast(1))

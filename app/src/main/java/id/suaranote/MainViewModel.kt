@@ -7,7 +7,9 @@ import id.suaranote.audio.Metronome
 import id.suaranote.core.Composition
 import id.suaranote.core.LiveTiming
 import id.suaranote.core.Measure
+import id.suaranote.core.Score
 import id.suaranote.core.ScoreSettings
+import id.suaranote.core.Symbol
 import id.suaranote.core.Synth
 import id.suaranote.core.Token
 import kotlinx.coroutines.CancellationException
@@ -22,20 +24,35 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
+const val MAX_VOICES = 4
+
 data class UiState(
-    val composition: Composition = Composition(),
+    val score: Score = Score(),
+    /** Suara (lapisan) yang sedang ditulisi. */
+    val activeVoice: Int = 0,
     val settings: ScoreSettings = ScoreSettings(),
     /** Panjang not yang dipakai tuts berikutnya, dalam 1/16 (4 = 1 ketuk). */
     val selectedDur16: Int = 4,
-    /** Not balok per birama dan simbol not angka per birama (turunan dari [composition]). */
-    val measures: List<Measure> = emptyList(),
-    val tokens: List<List<Token>> = emptyList(),
+    /** Turunan dari [score]: not balok dan simbol not angka, per suara lalu per birama. */
+    val measures: List<List<Measure>> = listOf(emptyList()),
+    val tokens: List<List<List<Token>>> = listOf(emptyList()),
     val playing: Boolean = false,
     /** Satuan waktu (1/16 sejak awal lagu) yang sedang berbunyi saat pemutaran; null bila tidak memutar. */
     val playUnit: Int? = null,
-    /** Awal pemutaran yang dipilih (satuan 1/16); [startIsBar] true = dipilih dari birama, bukan dari not. */
+    /**
+     * Titik terpilih (satuan 1/16): awal pemutaran sekaligus titik sisip tempat not yang diketik masuk.
+     * Null = pemutaran dari awal dan not ditambah di ujung suara. [startIsBar] true = dipilih dari birama.
+     */
     val startUnit: Int? = null,
     val startIsBar: Boolean = false,
+    val blockMode: Boolean = false,
+    /** Blok birama terpilih (indeks dari 0, inklusif) dan titik awal blok yang menunggu ujungnya. */
+    val blockFrom: Int? = null,
+    val blockTo: Int? = null,
+    val blockAnchor: Int? = null,
+    /** Isi papan klip (simbol sepanjang [clipboardBars] birama). */
+    val clipboard: List<Symbol>? = null,
+    val clipboardBars: Int = 0,
     val metronomeOn: Boolean = false,
     /** Mode live: panjang not ditentukan lama tuts ditahan. */
     val liveMode: Boolean = false,
@@ -45,7 +62,9 @@ data class UiState(
     val liveLegato: Boolean = false,
     val error: String? = null,
 ) {
-    val isEmpty: Boolean get() = composition.isEmpty
+    val composition: Composition get() = score.voices[activeVoice]
+    val isEmpty: Boolean get() = score.totalUnits == 0
+    val barLen: Int get() = settings.beatsPerBar * 4
 }
 
 class MainViewModel : ViewModel() {
@@ -62,22 +81,21 @@ class MainViewModel : ViewModel() {
     private var tickJob: Job? = null
     private var sustainJob: Job? = null
 
-    private fun withComposition(s: UiState, c: Composition, settings: ScoreSettings = s.settings): UiState {
-        val total = c.totalUnits
-        val keep = s.startUnit?.takeIf { it < total }
+    private fun withScore(s: UiState, score: Score, settings: ScoreSettings = s.settings): UiState {
+        val bpb = settings.beatsPerBar
         return s.copy(
-            composition = c,
+            score = score,
             settings = settings,
-            measures = c.measures(settings.beatsPerBar),
-            tokens = c.tokens(settings.beatsPerBar),
-            startUnit = keep,
-            startIsBar = if (keep == null) false else s.startIsBar,
+            activeVoice = s.activeVoice.coerceIn(0, score.voices.size - 1),
+            measures = score.measures(bpb),
+            tokens = score.tokens(bpb),
             error = null,
         )
     }
 
+    /** Menulis ulang suara aktif (dipakai mode live yang selalu menambah di ujung). */
     private fun setComposition(c: Composition) {
-        _state.update { withComposition(it, c) }
+        _state.update { withScore(it, it.score.withVoice(it.activeVoice, c)) }
     }
 
     private fun endLive() {
@@ -86,10 +104,45 @@ class MainViewModel : ViewModel() {
         sustainJob?.cancel()
     }
 
-    private fun edit(change: (Composition) -> Composition) {
+    /**
+     * Penyuntingan suara aktif. [change] menerima isi suara dan titik terpilih (null = ujung) dan mengembalikan
+     * isi baru beserta titik terpilih yang baru.
+     */
+    private fun editActive(change: (Composition, Int?) -> Pair<Composition, Int?>) {
         stopSong()
         endLive()
-        _state.update { withComposition(it, change(it.composition)) }
+        _state.update { s ->
+            val (c, cursor) = change(s.composition, s.startUnit)
+            val moved = s.copy(startUnit = cursor, startIsBar = if (cursor == null) false else s.startIsBar)
+            withScore(moved, s.score.withVoice(s.activeVoice, c))
+        }
+    }
+
+    // ---------------------------------------------------------------- suara
+
+    fun selectVoice(index: Int) {
+        _state.update { if (index in it.score.voices.indices) it.copy(activeVoice = index) else it }
+    }
+
+    fun addVoice() {
+        stopSong()
+        _state.update {
+            if (it.score.voices.size >= MAX_VOICES) it
+            else withScore(it.copy(activeVoice = it.score.voices.size), Score(it.score.voices + Composition()))
+        }
+    }
+
+    /** Menghapus suara aktif beserta isinya (minimal tersisa satu suara). */
+    fun removeVoice() {
+        stopSong()
+        endLive()
+        _state.update {
+            if (it.score.voices.size <= 1) it
+            else withScore(
+                it.copy(activeVoice = maxOf(0, it.activeVoice - 1)),
+                Score(it.score.voices.filterIndexed { i, _ -> i != it.activeVoice }),
+            )
+        }
     }
 
     // ---------------------------------------------------------------- tuts
@@ -174,25 +227,45 @@ class MainViewModel : ViewModel() {
         setComposition(s.composition.truncate(l.startSymbol).add(l.midi, l.dur))
     }
 
-    /** Mode biasa: tambahkan not dengan panjang terpilih di ujung lagu dan bunyikan. */
+    /** Mode biasa: tambah not di titik terpilih (disisip, isi sesudahnya bergeser) atau di ujung suara. */
     private fun pressKey(midi: Int) {
         val dur = _state.value.selectedDur16
-        edit { it.add(midi, dur) }
+        editActive { c, cur ->
+            if (cur == null) c.add(midi, dur) to null else c.insertNote(cur, midi, dur) to cur + dur
+        }
         preview(midi, dur)
     }
 
     fun addRest() {
         val s = _state.value
-        edit { it.add(null, if (s.liveMode) s.liveGrid else s.selectedDur16) }
+        val dur = if (s.liveMode) s.liveGrid else s.selectedDur16
+        editActive { c, cur ->
+            if (cur == null) c.add(null, dur) to null else c.insertNote(cur, null, dur) to cur + dur
+        }
     }
 
-    /** Selalu menghapus satu simbol paling akhir: kepala not/rehat atau satu perpanjangan (titik). */
-    fun deleteLast() = edit { it.removeLast() }
+    /**
+     * Hapus: tanpa titik terpilih menghapus satu simbol paling akhir suara aktif (kepala not, rehat, atau satu
+     * titik perpanjangan). Dengan titik terpilih menghapus satu simbol tepat sebelum titik itu (seperti backspace).
+     */
+    fun deleteLast() {
+        editActive { c, cur ->
+            if (cur == null) {
+                c.removeLast() to null
+            } else {
+                val before = c.splitAt(cur).symbolBefore(cur)
+                if (before == null) c to cur else c.removeBefore(cur) to cur - before.dur16
+            }
+        }
+    }
 
     /** Sambung: tambah perpanjangan (titik) sebesar panjang terpilih (mode live: kotak pembulatan). */
     fun extendLast() {
         val s = _state.value
-        edit { it.extend(if (s.liveMode) s.liveGrid else s.selectedDur16) }
+        val by = if (s.liveMode) s.liveGrid else s.selectedDur16
+        editActive { c, cur ->
+            if (cur == null) c.extend(by) to null else c.insertExtension(cur, by) to cur + by
+        }
     }
 
     fun selectDuration(dur16: Int) {
@@ -200,7 +273,7 @@ class MainViewModel : ViewModel() {
     }
 
     fun updateSettings(change: (ScoreSettings) -> ScoreSettings) {
-        _state.update { withComposition(it, it.composition, change(it.settings)) }
+        _state.update { withScore(it, it.score, change(it.settings)) }
     }
 
     fun changeTempo(delta: Int) = updateSettings { it.copy(bpm = (it.bpm + delta).coerceIn(40, 200)) }
@@ -243,18 +316,26 @@ class MainViewModel : ViewModel() {
         }
     }
 
-    // ------------------------------------------------------------ pemutaran
+    // -------------------------------------------------- pilihan titik dan blok
+
+    /** Sentuhan pada notasi: memilih titik (mode biasa) atau birama untuk blok (mode blok). */
+    fun tap(unit: Int, bar: Boolean, voice: Int) {
+        if (_state.value.blockMode) selectBlockBar(unit / _state.value.barLen, voice) else selectStart(unit, bar, voice)
+    }
 
     /**
-     * Pilih awal pemutaran: [unit] = satuan 1/16 yang disentuh. Menyentuh not memilih not itu (awal not utuh);
-     * menyentuh ruang kosong birama memilih awal birama. Menyentuh pilihan yang sama membatalkannya.
-     * Bila lagu sedang diputar, pemutaran langsung berpindah ke titik itu.
+     * Pilih titik: [unit] = satuan 1/16 yang disentuh pada [voice]. Menyentuh not memilih awal not itu; menyentuh
+     * ruang kosong birama memilih awal birama. Menyentuh pilihan yang sama membatalkannya. Titik ini menjadi awal
+     * pemutaran dan titik sisip. Bila lagu sedang diputar, pemutaran langsung berpindah ke titik itu.
      */
-    fun selectStart(unit: Int, bar: Boolean) {
+    fun selectStart(unit: Int, bar: Boolean, voice: Int) {
         val s = _state.value
-        val u = if (bar) unit else s.composition.eventStart(unit)
-        val same = s.startUnit == u && s.startIsBar == bar
-        _state.update { it.copy(startUnit = if (same) null else u, startIsBar = if (same) false else bar) }
+        val v = voice.coerceIn(0, s.score.voices.size - 1)
+        val u = if (bar) unit else s.score.voices[v].eventStart(unit)
+        val same = s.startUnit == u && s.startIsBar == bar && s.activeVoice == v
+        _state.update {
+            it.copy(activeVoice = v, startUnit = if (same) null else u, startIsBar = if (same) false else bar)
+        }
         if (s.playing) {
             stopSong()
             _state.update { it.copy(playing = false) }
@@ -262,13 +343,72 @@ class MainViewModel : ViewModel() {
         }
     }
 
+    /** Kembali menulis di ujung suara (membatalkan titik sisip). */
+    fun clearStart() {
+        _state.update { it.copy(startUnit = null, startIsBar = false) }
+    }
+
+    fun toggleBlockMode() {
+        _state.update { it.copy(blockMode = !it.blockMode, blockAnchor = null) }
+    }
+
+    private fun selectBlockBar(bar: Int, voice: Int) {
+        _state.update {
+            val a = it.blockAnchor
+            if (a == null) it.copy(activeVoice = voice, blockFrom = bar, blockTo = bar, blockAnchor = bar)
+            else it.copy(activeVoice = voice, blockFrom = minOf(a, bar), blockTo = maxOf(a, bar), blockAnchor = null)
+        }
+    }
+
+    fun clearBlock() {
+        _state.update { it.copy(blockFrom = null, blockTo = null, blockAnchor = null) }
+    }
+
+    private fun fail(message: String) {
+        _state.update { it.copy(error = message) }
+    }
+
+    /** Salin birama terpilih (suara aktif) ke papan klip. */
+    fun copyBlock() {
+        val s = _state.value
+        val from = s.blockFrom ?: return fail("Pilih blok bar dulu: nyalakan Blok bar lalu sentuh bar awal dan bar akhir.")
+        val to = s.blockTo ?: from
+        val clip = s.composition.slice(from * s.barLen, (to + 1) * s.barLen)
+        _state.update { it.copy(clipboard = clip, clipboardBars = to - from + 1, error = null) }
+    }
+
+    /** Tempel di awal bar tujuan (bar tempat titik terpilih). [overwrite] false = sisip, true = timpa. */
+    fun paste(overwrite: Boolean) {
+        val s = _state.value
+        val clip = s.clipboard ?: return fail("Papan klip kosong: salin blok bar dulu.")
+        val target = s.startUnit ?: return fail("Pilih bar tujuan dulu: matikan Blok bar lalu sentuh bar tujuan.")
+        val at = target / s.barLen * s.barLen
+        val len = s.clipboardBars * s.barLen
+        editActive { c, _ ->
+            val result = if (overwrite) c.replaceRange(at, at + len, clip) else c.insertAt(at, clip)
+            result to at + len
+        }
+    }
+
+    /** Salin blok terpilih lalu tempel setelah bar terakhir lagu. */
+    fun copyBlockToEnd() {
+        val s = _state.value
+        val from = s.blockFrom ?: return fail("Pilih blok bar dulu: nyalakan Blok bar lalu sentuh bar awal dan bar akhir.")
+        val to = s.blockTo ?: from
+        val clip = s.composition.slice(from * s.barLen, (to + 1) * s.barLen)
+        val end = s.score.barCount(s.settings.beatsPerBar) * s.barLen
+        editActive { c, cur -> c.padTo(end).append(clip) to cur }
+    }
+
+    // ------------------------------------------------------------ pemutaran
+
     fun togglePlay() {
         if (_state.value.playing) { stopSong(); return }
         val s = _state.value
         if (s.isEmpty) return
         previewJob?.cancel()
         endLive()
-        val start = (s.startUnit ?: 0).coerceIn(0, maxOf(0, s.composition.totalUnits - 1))
+        val start = (s.startUnit ?: 0).coerceIn(0, maxOf(0, s.score.totalUnits - 1))
         val sixteenthSec = 60.0 / s.settings.bpm / 4
         _state.update { it.copy(playing = true, playUnit = start) }
         syncMetronome()
@@ -276,7 +416,7 @@ class MainViewModel : ViewModel() {
             val me = kotlin.coroutines.coroutineContext[Job]
             try {
                 val data = withContext(Dispatchers.Default) {
-                    val pcm = Synth.render(listOf(Measure(s.composition.eventsFrom(start))), s.settings.bpm)
+                    val pcm = Synth.renderVoices(s.score.voices.map { it.eventsFrom(start) }, s.settings.bpm)
                     if (s.metronomeOn) Synth.mixClicks(pcm, s.settings.bpm, s.settings.beatsPerBar, start) else pcm
                 }
                 AudioPlayer.play(data, Synth.RATE) { frames ->

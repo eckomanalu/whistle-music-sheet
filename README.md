@@ -34,3 +34,10 @@ Bentuk glyph notasi berasal dari font Bravura (c) Steinberg Media Technologies G
 ## Build APK otomatis
 Workflow `.github/workflows/build-apk.yml` menjalankan tes unit lalu membuat APK debug pada setiap push ke `main`
 (atau manual lewat tab Actions > Build APK > Run workflow). Unduh APK dari bagian **Artifacts** pada run tersebut.
+
+## Multi-suara, sisip, nomor bar, blok salin-tempel
+
+- **Suara**: sampai 4 suara (chip "Suara 1…4", "+ Suara", "− Hapus suara"). Semua suara tampil bertumpuk dengan barline sejajar dan terdengar bersamaan saat diputar.
+- **Titik pilih**: ketuk not/bar untuk memilih titik. Not baru, rehat, sambung, dan hapus bekerja di titik itu (menyisip, not setelahnya bergeser). ▶ "Dari sini" memutar dari titik itu.
+- **Nomor bar** tampil di not balok dan not angka.
+- **Blok bar**: nyalakan "Blok bar", ketuk bar awal dan akhir, lalu **Salin**. Pilih bar tujuan lalu **Tempel: sisip** (menggeser isi) atau **Tempel: timpa** (menghapus not di bar tujuan). **Salin ke akhir** menempelkan blok ke bar terakhir.

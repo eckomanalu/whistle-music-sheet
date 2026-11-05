@@ -28,7 +28,11 @@ import id.suaranote.render.TieOp
 
 /** Menafsirkan daftar operasi gambar dari StaffRenderer / NumberedRenderer ke Canvas Compose. */
 private val PlayColor = Color(0xFFE65100) // simbol yang sedang berbunyi
-private val StartColor = Color(0xFF1565C0) // awal pemutaran yang dipilih
+private val StartColor = Color(0xFF1565C0) // titik terpilih (awal pemutaran / titik sisip)
+private val BlockColor = Color(0xFFFFA000) // blok birama terpilih
+
+/** Warna tiap suara (suara 1 memakai warna dasar). */
+val VoiceColors = listOf(Color(0xFF1B1B1F), Color(0xFF00695C), Color(0xFF6A1B9A), Color(0xFF8D6E63))
 
 @Composable
 fun RenderedCanvas(
@@ -38,7 +42,11 @@ fun RenderedCanvas(
     playUnit: Int? = null,
     startUnit: Int? = null,
     startIsBar: Boolean = false,
-    onTap: ((unit: Int, bar: Boolean) -> Unit)? = null,
+    activeVoice: Int = 0,
+    voiceCount: Int = 1,
+    blockFrom: Int? = null,
+    blockTo: Int? = null,
+    onTap: ((unit: Int, bar: Boolean, voice: Int) -> Unit)? = null,
 ) {
     val density = LocalDensity.current
     val glyphPaths = remember {
@@ -52,13 +60,14 @@ fun RenderedCanvas(
     }
     val heightDp = with(density) { rendering.height.toDp() }
 
-    // warna per operasi gambar: sorotan pemutaran (oranye) dan awal terpilih (biru)
-    val opColor = remember(rendering, playUnit, startUnit, startIsBar) {
+    // warna per operasi gambar: warna suara, sorotan pemutaran (oranye), titik terpilih (biru)
+    val opColor = remember(rendering, playUnit, startUnit, startIsBar, activeVoice) {
         val arr = arrayOfNulls<Color>(rendering.ops.size)
         for (h in rendering.hits) {
             val c = when {
                 playUnit != null && playUnit >= h.startUnit && playUnit < h.endUnit -> PlayColor
-                startUnit != null && !startIsBar && startUnit == h.startUnit -> StartColor
+                startUnit != null && !startIsBar && h.voice == activeVoice && startUnit == h.startUnit -> StartColor
+                h.voice > 0 -> VoiceColors[h.voice % VoiceColors.size]
                 else -> null
             }
             if (c != null) for (i in h.ops) arr[i] = c
@@ -69,20 +78,22 @@ fun RenderedCanvas(
         detectTapGestures { p ->
             val hit = rendering.hits.firstOrNull { p.x >= it.left && p.x < it.right && p.y >= it.top && p.y < it.bottom }
             if (hit != null) {
-                onTap(hit.startUnit, false)
+                onTap(hit.startUnit, false, hit.voice)
             } else {
                 val bar = rendering.bars.firstOrNull { p.x >= it.left && p.x < it.right && p.y >= it.top && p.y < it.bottom }
-                if (bar != null) onTap(bar.startUnit, true)
+                if (bar != null) onTap(bar.startUnit, true, bar.voice)
             }
         }
     }
 
     Canvas(modifier.fillMaxWidth().height(heightDp).then(tapModifier)) {
-        // latar: birama terpilih dan simbol yang sedang berbunyi
-        if (startUnit != null && startIsBar) {
-            for (b in rendering.bars) if (b.startUnit == startUnit) {
-                drawRect(StartColor.copy(alpha = 0.12f), Offset(b.left, b.top), androidx.compose.ui.geometry.Size(b.right - b.left, b.bottom - b.top))
-            }
+        fun tint(b: id.suaranote.render.Bar, c: Color, alpha: Float) =
+            drawRect(c.copy(alpha = alpha), Offset(b.left, b.top), androidx.compose.ui.geometry.Size(b.right - b.left, b.bottom - b.top))
+        // latar: suara aktif (bila ada beberapa), blok terpilih, birama titik terpilih, simbol yang sedang berbunyi
+        for (b in rendering.bars) {
+            if (voiceCount > 1 && b.voice == activeVoice) tint(b, VoiceColors[b.voice % VoiceColors.size], 0.07f)
+            if (blockFrom != null && blockTo != null && b.measure in blockFrom..blockTo) tint(b, BlockColor, 0.22f)
+            if (startUnit != null && startIsBar && b.voice == activeVoice && b.startUnit == startUnit) tint(b, StartColor, 0.14f)
         }
         if (playUnit != null) {
             for (h in rendering.hits) if (playUnit >= h.startUnit && playUnit < h.endUnit) {

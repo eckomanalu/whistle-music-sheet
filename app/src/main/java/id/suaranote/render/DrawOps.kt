@@ -44,10 +44,19 @@ data class Hit(
     val right: Float,
     val bottom: Float,
     val ops: List<Int>,
+    val voice: Int = 0,
 )
 
 /** Satu birama (untuk memilih awal pemutaran dari birama). */
-data class Bar(val measure: Int, val startUnit: Int, val left: Float, val top: Float, val right: Float, val bottom: Float)
+data class Bar(
+    val measure: Int,
+    val startUnit: Int,
+    val left: Float,
+    val top: Float,
+    val right: Float,
+    val bottom: Float,
+    val voice: Int = 0,
+)
 
 data class Rendering(
     val width: Float,
