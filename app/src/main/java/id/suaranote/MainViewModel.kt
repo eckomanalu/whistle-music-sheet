@@ -32,6 +32,8 @@ data class UiState(
     val liveMode: Boolean = false,
     /** Kelipatan pembulatan mode live dalam 1/16 (1, 2 = 1/8, atau 4 = 1/4). */
     val liveGrid: Int = 2,
+    /** Mode live: celah antar-tuts tidak dijadikan rehat; not bersambung ke tuts berikutnya. */
+    val liveLegato: Boolean = false,
     val error: String? = null,
 ) {
     val isEmpty: Boolean get() = composition.events.isEmpty()
@@ -75,6 +77,19 @@ class MainViewModel : ViewModel() {
         _state.update { it.copy(liveMode = on) }
     }
 
+    fun setLegato(on: Boolean) {
+        _state.update { it.copy(liveLegato = on) }
+    }
+
+    /** Titik pada not/rehat terakhir. */
+    fun dotLast() = edit { it.dotLast() }
+
+    /** Sambung: perpanjang not/rehat terakhir sebesar panjang terpilih (mode live: kotak pembulatan). */
+    fun extendLast() {
+        val s = _state.value
+        edit { it.extendLast(if (s.liveMode) s.liveGrid else s.selectedDur16) }
+    }
+
     fun setLiveGrid(grid: Int) {
         _state.update { it.copy(liveGrid = grid) }
     }
@@ -101,7 +116,7 @@ class MainViewModel : ViewModel() {
         val prev = live
         if (prev != null && c.events.isNotEmpty()) {
             val release = prev.releaseNs ?: now
-            val (note, rest) = LiveTiming.settle((release - prev.pressNs) / 1e9, (now - prev.pressNs) / 1e9, unit, grid)
+            val (note, rest) = LiveTiming.settle((release - prev.pressNs) / 1e9, (now - prev.pressNs) / 1e9, unit, grid, s.liveLegato)
             c = c.replaceLast(note)
             if (rest > 0) c = c.add(null, rest)
         }

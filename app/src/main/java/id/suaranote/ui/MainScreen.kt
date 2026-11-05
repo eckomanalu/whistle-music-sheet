@@ -172,6 +172,11 @@ private fun InputPanel(state: UiState, vm: MainViewModel) {
                     )
                 }
             }
+            FilterChip(
+                selected = state.liveLegato,
+                onClick = { vm.setLegato(!state.liveLegato) },
+                label = { Text(if (state.liveLegato) "Legato: nada bersambung, tanpa rehat" else "Legato (tanpa rehat otomatis)") },
+            )
             if (!state.metronomeOn) {
                 Text("Nyalakan Metronom agar ketukan Anda stabil.", style = MaterialTheme.typography.bodySmall)
             }
@@ -204,22 +209,36 @@ private fun InputPanel(state: UiState, vm: MainViewModel) {
                 modifier = Modifier.weight(1f),
             )
         }
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedButton(onClick = { vm.addRest() }, modifier = Modifier.weight(1f), contentPadding = PaddingValues(4.dp)) {
-                Text("Rehat")
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            OutlinedButton(onClick = { vm.addRest() }, modifier = Modifier.weight(1f), contentPadding = PaddingValues(2.dp)) {
+                Text("0 Rehat", fontSize = 13.sp)
             }
+            OutlinedButton(
+                onClick = { vm.dotLast() },
+                enabled = state.composition.canDot(),
+                modifier = Modifier.weight(1f),
+                contentPadding = PaddingValues(2.dp),
+            ) { Text("• Titik", fontSize = 13.sp) }
+            OutlinedButton(
+                onClick = { vm.extendLast() },
+                enabled = !state.isEmpty,
+                modifier = Modifier.weight(1f),
+                contentPadding = PaddingValues(2.dp),
+            ) { Text("– Sambung", fontSize = 13.sp) }
+        }
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             Button(
                 onClick = { vm.deleteLast() },
                 enabled = !state.isEmpty,
                 modifier = Modifier.weight(1f),
                 colors = ButtonDefaults.buttonColors(containerColor = RecordRed),
-                contentPadding = PaddingValues(4.dp),
+                contentPadding = PaddingValues(2.dp),
             ) { Text("⌫ Hapus") }
             OutlinedButton(
                 onClick = { vm.togglePlay() },
                 enabled = !state.isEmpty,
                 modifier = Modifier.weight(1f),
-                contentPadding = PaddingValues(4.dp),
+                contentPadding = PaddingValues(2.dp),
             ) { Text(if (state.playing) "■ Berhenti" else "▶ Putar") }
         }
         PianoKeyboard(onDown = { vm.keyDown(it) }, onUp = { vm.keyUp(it) })
@@ -232,13 +251,13 @@ private fun isBlack(midi: Int) = Math.floorMod(midi, 12) in intArrayOf(1, 3, 6, 
 @Composable
 private fun PianoKeyboard(onDown: (Int) -> Unit, onUp: (Int) -> Unit) {
     val whites = (FIRST_MIDI..LAST_MIDI).filter { !isBlack(it) }
-    BoxWithConstraints(Modifier.fillMaxWidth().height(170.dp)) {
+    BoxWithConstraints(Modifier.fillMaxWidth().height(150.dp)) {
         val whiteW = maxWidth / whites.size
         val blackW = whiteW * 0.62f
         for ((i, m) in whites.withIndex()) {
             Key(
                 midi = m, black = false, onDown = onDown, onUp = onUp,
-                modifier = Modifier.offset(x = whiteW * i).width(whiteW).height(170.dp),
+                modifier = Modifier.offset(x = whiteW * i).width(whiteW).height(150.dp),
                 label = if (m % 12 == 0) "C${m / 12 - 1}" else null,
             )
         }
@@ -247,7 +266,7 @@ private fun PianoKeyboard(onDown: (Int) -> Unit, onUp: (Int) -> Unit) {
             if (next <= LAST_MIDI && isBlack(next)) {
                 Key(
                     midi = next, black = true, onDown = onDown, onUp = onUp,
-                    modifier = Modifier.offset(x = whiteW * (i + 1) - blackW / 2).width(blackW).height(104.dp),
+                    modifier = Modifier.offset(x = whiteW * (i + 1) - blackW / 2).width(blackW).height(92.dp),
                     label = null,
                 )
             }

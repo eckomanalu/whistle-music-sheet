@@ -15,12 +15,13 @@ object LiveTiming {
      * Panjang akhir sebuah not setelah not berikutnya ditekan.
      * [heldSec] = lama tuts ditahan, [ioiSec] = jarak tekan ke tekan berikutnya.
      * Hasil: (panjang not, panjang rehat sesudahnya; 0 = tanpa rehat). Celah kecil (kurang dari satu kotak,
-     * kebiasaan melepas tuts sedikit lebih cepat) dianggap legato dan menyatu ke not; celah besar jadi rehat.
+     * kebiasaan melepas tuts sedikit lebih cepat) dianggap legato dan menyatu ke not; celah besar jadi rehat, kecuali [legato].
      */
-    fun settle(heldSec: Double, ioiSec: Double, unitSec: Double, grid: Int): Pair<Int, Int> {
+    fun settle(heldSec: Double, ioiSec: Double, unitSec: Double, grid: Int, legato: Boolean = false): Pair<Int, Int> {
         val held = quantize(heldSec, unitSec, grid)
         val ioi = quantize(ioiSec, unitSec, grid)
         val rest = ioi - held
-        return if (rest >= maxOf(2, grid)) held to rest else ioi to 0
+        // legato: not selalu bersambung sampai tuts berikutnya, tanpa rehat
+        return if (!legato && rest >= maxOf(2, grid)) held to rest else ioi to 0
     }
 }

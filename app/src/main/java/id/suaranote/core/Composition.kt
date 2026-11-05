@@ -20,6 +20,21 @@ data class Composition(val events: List<NoteEvent> = emptyList()) {
     /** Menghapus satu not/rehat paling akhir; tidak berbuat apa-apa bila kosong. */
     fun removeLast(): Composition = if (events.isEmpty()) this else Composition(events.dropLast(1))
 
+    /** Titik: not/rehat terakhir menjadi 1,5x panjangnya. Hanya untuk panjang kelipatan dua murni (bukan yang sudah bertitik). */
+    fun dotLast(): Composition {
+        val d = events.lastOrNull()?.dur16 ?: return this
+        if (d < 2 || d and (d - 1) != 0 || d * 3 / 2 > MAX_DUR16) return this
+        return replaceLast(d * 3 / 2)
+    }
+
+    /** Sambung: not/rehat terakhir diperpanjang sebesar [by] (1/16), mis. satu ketuk lagi. */
+    fun extendLast(by: Int): Composition {
+        val d = events.lastOrNull()?.dur16 ?: return this
+        return if (d + by > MAX_DUR16) this else replaceLast(d + by)
+    }
+
+    fun canDot(): Boolean = dotLast() != this
+
     fun measures(beatsPerBar: Int): List<Measure> = ScoreBuilder.build(events, beatsPerBar * 4)
 
     companion object {

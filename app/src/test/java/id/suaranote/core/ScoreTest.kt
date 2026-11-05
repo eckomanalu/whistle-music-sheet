@@ -71,6 +71,29 @@ class ScoreTest {
         assertEquals(0, energy(0.25)) // di antara ketukan sunyi
     }
 
+    @Test
+    fun dotAndExtend() {
+        val c = song(60 to 4, 62 to 8)
+        assertEquals(12, c.dotLast().events.last().dur16) // setengah menjadi bertitik
+        assertEquals(listOf(60, 62), c.dotLast().events.map { it.midi })
+        assertEquals(false, c.dotLast().canDot()) // sudah bertitik: tidak ada titik ganda
+        assertEquals(6, song(60 to 4).dotLast().events.last().dur16)
+        assertEquals(3, song(60 to 2).dotLast().events.last().dur16)
+        assertEquals(song(60 to 1), song(60 to 1).dotLast()) // 1/16 tidak bisa dititik
+        assertEquals(Composition(), Composition().dotLast())
+        assertEquals(8, song(60 to 4).extendLast(4).events.last().dur16) // sambung satu ketuk
+        assertEquals(song(60 to 64), song(60 to 64).extendLast(4)) // batas
+        val dotted = Composition().add(60, 4).dotLast().add(62, 2).add(64, 8).add(null, 2)
+        assertEquals("1 = C\n| 1. 2_ 3 - | 0_ |", numbered(dotted))
+    }
+
+    @Test
+    fun liveLegatoNeverMakesRests() {
+        val unit = 60.0 / 90 / 4
+        assertEquals(2 to 2, LiveTiming.settle(0.2, 0.67, unit, 2))
+        assertEquals(4 to 0, LiveTiming.settle(0.2, 0.67, unit, 2, legato = true))
+    }
+
     @Test(expected = IllegalArgumentException::class)
     fun rejectsDurationOutOfRange() {
         Composition().add(60, 0)
